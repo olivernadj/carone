@@ -12,4 +12,4 @@ signal instead of sinusoid one.
 ![Fake the hall output](./simulated-hall-effect-sensor.png "Fake the hall output")
 
 ## Intro
-[![IMAGE ALT TEXT HERE](http://img.youtube.com/vi/YOUTUBE_VIDEO_ID_HERE/0.jpg)](http://www.youtube.com/watch?v=YOUTUBE_VIDEO_ID_HERE)
+[![IMAGE ALT TEXT HERE](http://img.youtube.com/vi/KRvLtCJ4lMA/0.jpg)](https://youtu.be/KRvLtCJ4lMA)
