@@ -24,11 +24,11 @@ volatile int speed = 0;
 int maskSWLastState;
 int rotarySWLastState;
 
-bool applyMask = true; // managed by switch
+bool applyMask = false; // managed by switch
 bool maskStateHigh = true;
 
-long blinkLenght = 1000000;  
-volatile long hallSignLength = 1000000;  
+long blinkLenght = 1000000;
+volatile long hallSignLength = 1000000;
 
 bool hallYellowState = true;
 bool hallBlueState = true;
@@ -92,7 +92,7 @@ void hallSingGen() {
     digitalWrite(hallYellowPin, hallYellowState);
     digitalWrite(hallBluePin, hallBlueState);
     digitalWrite(hallGreenPin, hallGreenState);
-  } else {      
+  } else {
     digitalWrite(hallYellowPin, LOW);
     digitalWrite(hallBluePin, LOW);
     digitalWrite(hallGreenPin, LOW);
@@ -146,17 +146,17 @@ void waveGen() {
   static int phase = 0;
   maskStateHigh = ++phase % 3 == 0;
   digitalWrite(waveGenPin, maskStateHigh);
-  if (applyMask) { 
+  if (applyMask) {
     if (maskStateHigh) {
       digitalWrite(hallYellowPin, hallYellowState);
       digitalWrite(hallBluePin, hallBlueState);
       digitalWrite(hallGreenPin, hallGreenState);
-    } else {      
+    } else {
       digitalWrite(hallYellowPin, LOW);
       digitalWrite(hallBluePin, LOW);
       digitalWrite(hallGreenPin, LOW);
     }
-  }    
+  }
 }
 
 /***
@@ -189,7 +189,7 @@ void readRotaryEnc() {
     if (speed != 0) hallSignLength = (long)1000000 / (abs(speed) * 6);
     else hallSignLength = 1000000;
   }
-  timestamp = micros(); 
+  timestamp = micros();
 }
 
 /***
@@ -221,12 +221,12 @@ static int ptDebugInfo(struct pt *pt, unsigned long interval) {
 void setup() {
   PT_INIT(&pt1);
   PT_INIT(&pt2);
-  PT_INIT(&pt3);  
+  PT_INIT(&pt3);
   PT_INIT(&pt4);
   PT_INIT(&pt5);
 
   if (_SERIAL_DEBUG) {
-    Serial.begin(9600);
+    Serial.begin(_SERIAL_DEBUG);
     Serial.println("Hello FakeHall!");
   }
 
