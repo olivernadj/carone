@@ -1,4 +1,4 @@
-#include <ParaSerialWrite.h> // ParaSerialWrite library for parallel UART transmission
+#include <SoftSerialParallelWrite.h> // SoftSerialParallelWrite library for parallel UART transmission
 
 #define _DEBUG 1
 #define _SERIAL 9600 // bandwidth or 0 means turned off
@@ -28,7 +28,7 @@ unsigned long rightCyclePerSec = 0;
 
 char shifter = 'D'; // [P]ark or [D]rive
 
-ParaSerialWrite mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
+SoftSerialParallelWrite mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
 const int framesInMessage = 10; // vary by models. how many frames transfer before ~500us pause
 
 enum controlOptions { bySerial, byI2C }; // control by serial input or pull up buttons
@@ -52,7 +52,7 @@ void debugPulse(int pin, uint16_t count)
 
 /***
  * Transmits imitated UART signal, just like gyro sensor.
- * Uses ParaSerialWrite library what can do multiple UART transmission with
+ * Uses SoftSerialParallelWrite library what can do multiple UART transmission with
  * same frame size and baud-rate
  */
 void writeCurrentSpeed() {
