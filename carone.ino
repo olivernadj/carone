@@ -3,30 +3,30 @@
 #define _DEBUG 1
 #define _SERIAL 9600 // bandwidth or 0 means turned off
 
-const int debugPin4            = 13; // debug during development
-const int debugPin3            = 12; // debug during development
-const int debugPin2            = 11; // debug during development
-const int debugPin1            = 10; // debug during development
+const int debugPin2            = A5; // debug during development
+const int debugPin1            = A4; // debug during development
 const int inputSelector        =  7; // hijack gyro sensor communication
 const int hallRightBluePin     =  5; // hall effect direction check
 const int hallLeftBluePin      =  4; // hall effect direction check
 const int hallRightYellowPin   =  3; // hall effect triggering
 const int hallLeftYellowPin    =  2; // hall effect triggering
 
-signed int leftAcceleration = 111; // left wheel speed
-signed int rightAcceleration = 111; // right wheel speed
-bool leftClockwise = false;
-bool rightClockwise = false;
-
-
+enum speedControl { targetSpeed, acceleration};
+int speedControlBy = targetSpeed;
+signed int leftAcceleration = 0;
+signed int rightAcceleration = 0;
+signed int leftTargetSpeed = 0; //maximum +/-180 hall effect cycles per sec
+signed int rightTargetSpeed = 0;
 unsigned long lastLeftIncrCalculated = 0;
 unsigned int leftIncrements = 0;
 unsigned long leftCyclePerSec = 0;
 unsigned long lastRightIncrCalculated = 0;
 unsigned int rightIncrements = 0;
 unsigned long rightCyclePerSec = 0;
+bool leftClockwise = false;
+bool rightClockwise = false;
 
-char shifter = 'D'; // [P]ark or [D]rive
+char shifter = 'P'; // [P]ark or [D]rive
 
 SoftSerialParallelWrite mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
 const int framesInMessage = 10; // vary by models. how many frames transfer before ~500us pause
@@ -111,12 +111,24 @@ void listenSerialControl() {
       rightAcceleration=0;
     } else if(c == 'q') {
       leftAcceleration += 50;
-    } else if(c == 'a') {
+    } else if(c == 'z') {
       leftAcceleration -= 50;
     } else if(c == 'w') {
       rightAcceleration += 50;
-    }  else if(c == 's') {
+    } else if(c == 'x') {
       rightAcceleration -= 50;
+    } else if(c == '1') {
+      digitalWrite(inputSelector, LOW); // turned on
+    } else if(c == '0') {
+      digitalWrite(inputSelector, HIGH); //turned off
+    } else if(c == 'd' || c == 'D') {
+      shifter = 'D'; // drive
+    } else if(c == 'p' || c == 'P') {
+      shifter = 'P'; // park
+    } else if(c == 'a') {
+      speedControlBy = acceleration;
+    } else if(c == 's') {
+      speedControlBy = targetSpeed;
     }
   }
 }
@@ -133,7 +145,8 @@ void listenControl() {
 }
 
 /***
-  * Calculates last 4 averages and sets to leftCyclePerSec and rightCyclePerSec
+  * Calculates last 4 averages of hall effect cycles 
+  * and sets to leftCyclePerSec and rightCyclePerSec
   */
 void calculateIncInPeriod() {
   static unsigned long timestamp = 0;
@@ -167,7 +180,7 @@ void hallLeftEnc() {
   debugPulse(debugPin1, 1);
   bool hallLeftYellowState = digitalRead(hallLeftYellowPin);
   if (!hallLeftYellowState && (timestamp+500) < micros()) {
-    if (leftCyclePerSec < 15) //only detect direction under one rotation/s
+    if (leftCyclePerSec < 15) //only detect direction under one wheel rotation/s
       leftClockwise = digitalRead(hallLeftBluePin);
     leftIncrements++;
     timestamp = micros();
@@ -190,7 +203,9 @@ void hallRightEnc() {
 }
 
 void debugInfo() {
-  Serial.print("LCPS: ");
+  Serial.print("(");
+  Serial.print(shifter);
+  Serial.print("); LCPS: ");
   Serial.print(leftCyclePerSec);
   Serial.print("; RCPS: ");
   Serial.println(rightCyclePerSec);
@@ -201,8 +216,6 @@ void setup() {
 
   pinMode(debugPin1, OUTPUT);
   pinMode(debugPin2, OUTPUT);
-  pinMode(debugPin3, OUTPUT);
-  pinMode(debugPin4, OUTPUT);
   pinMode(hallLeftYellowPin, INPUT);
   pinMode(hallLeftBluePin, INPUT);
   pinMode(hallRightYellowPin, INPUT);
@@ -215,8 +228,10 @@ void setup() {
 
   mySerial.begin(26275, 11); // hover board UART baud-rate and frame size
   if (_SERIAL) {
-    Serial.begin(_SERIAL); // opens serial port, sets data rate to 9600 bps
-    Serial.println("CarOne");
+    Serial.begin(_SERIAL); // opens serial port
+    Serial.setTimeout(10); // 10ms should be enough to receive few chars
+    Serial.println("\n         _    _\n         \\`../ |o_..__\n          (*)______(*).>\n");
+    Serial.println("Hi there, CarOne is ready to drive.");
   }
 
   // TODO: need to be controlled from outside
