@@ -10,30 +10,24 @@ const int hallRightBluePin     =  5; // hall effect direction check
 const int hallLeftBluePin      =  4; // hall effect direction check
 const int hallRightYellowPin   =  3; // hall effect triggering
 const int hallLeftYellowPin    =  2; // hall effect triggering
+const int maxAcceleration      = 2900; // measured value from gyro board at ~30 degree
 
-enum speedControl { targetSpeed, acceleration};
-int speedControlBy = targetSpeed;
-signed int leftAcceleration = 0;
-signed int rightAcceleration = 0;
-signed int leftTargetSpeed = 0; //maximum +/-180 hall effect cycles per sec
-signed int rightTargetSpeed = 0;
-unsigned long lastLeftIncrCalculated = 0;
-unsigned int leftIncrements = 0;
-unsigned long leftCyclePerSec = 0;
-unsigned long lastRightIncrCalculated = 0;
-unsigned int rightIncrements = 0;
-unsigned long rightCyclePerSec = 0;
-bool leftClockwise = false;
-bool rightClockwise = false;
-
-char shifter = 'P'; // [P]ark or [D]rive
+volatile unsigned int leftIncrements = 0;
+volatile unsigned long leftCyclePerSec = 0;
+volatile unsigned int rightIncrements = 0;
+volatile unsigned long rightCyclePerSec = 0;
+volatile bool leftClockwise = false;
+volatile bool rightClockwise = false;
 
 SoftSerialParallelWrite mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
 const int framesInMessage = 10; // vary by models. how many frames transfer before ~500us pause
 
 enum controlOptions { bySerial, byI2C }; // control by serial input or pull up buttons
 int control = bySerial; // control set to button
-char c = 'x'; //last received input by serial. x = neutral
+char command = 'n'; //last received input by serial. n is no acceleration
+char shifter = 'P'; // [P]ark or [D]rive
+signed int leftAcceleration = 0;
+signed int rightAcceleration = 0;
 
 //
 // Debugging
@@ -76,8 +70,8 @@ void writeCurrentSpeed() {
         mySerial.write(~startSignal, ~startSignal);
         leftAccelerationLowFrame = 0xFC00 | ((leftAcceleration & 0xFF) << 1);
         leftAccelerationHighFrame = 0xFC00 | (((leftAcceleration >> 8) & 0xFF) << 1);
-        rightAccelerationLowFrame = 0xFC00 | ((-rightAcceleration & 0xFF) << 1);
-        rightAccelerationHighFrame = 0xFC00 | (((-rightAcceleration >> 8) & 0xFF) << 1);
+        rightAccelerationLowFrame = 0xFC00 | ((rightAcceleration & 0xFF) << 1);
+        rightAccelerationHighFrame = 0xFC00 | (((rightAcceleration >> 8) & 0xFF) << 1);
         endSignal = (shifter == 'D') ? driveEndSignal : parkEndSignal ;
         currentFrame++;
         break;
@@ -104,31 +98,35 @@ void writeCurrentSpeed() {
  * Development and debugging purpose only.
  */
 void listenSerialControl() {
+  int parsedInt = 0;
   if (Serial.available() > 0) {
-    c=Serial.read();
-    if(c == ' ') {
-      leftAcceleration=0;
-      rightAcceleration=0;
-    } else if(c == 'q') {
-      leftAcceleration += 50;
-    } else if(c == 'z') {
-      leftAcceleration -= 50;
-    } else if(c == 'w') {
-      rightAcceleration += 50;
-    } else if(c == 'x') {
-      rightAcceleration -= 50;
-    } else if(c == '1') {
-      digitalWrite(inputSelector, LOW); // turned on
-    } else if(c == '0') {
-      digitalWrite(inputSelector, HIGH); //turned off
-    } else if(c == 'd' || c == 'D') {
-      shifter = 'D'; // drive
-    } else if(c == 'p' || c == 'P') {
-      shifter = 'P'; // park
-    } else if(c == 'a') {
-      speedControlBy = acceleration;
-    } else if(c == 's') {
-      speedControlBy = targetSpeed;
+    command=Serial.read();
+    if (Serial.available() > 0) parsedInt = Serial.parseInt(); 
+    switch (command) {
+      case 'n':
+        leftAcceleration=0;
+        rightAcceleration=0;
+        break;
+      case 'q':
+        if (abs(parsedInt) <= maxAcceleration) leftAcceleration = parsedInt;
+        break;
+      case 'w':
+        if (abs(parsedInt) <= maxAcceleration) rightAcceleration = parsedInt;
+        break;
+      case '1':
+        digitalWrite(inputSelector, LOW); // turned on
+        break;
+      case '0':
+        digitalWrite(inputSelector, HIGH); //turned off
+        break;
+      case 'd':
+      case 'D':
+        shifter = 'D'; // drive
+        break;
+      case 'p':
+      case 'P':
+        shifter = 'P'; // park
+        break;
     }
   }
 }
@@ -202,14 +200,23 @@ void hallRightEnc() {
   }
 }
 
-void debugInfo() {
-  Serial.print("(");
+void serialInfo() {
+  Serial.print(command);
+  Serial.print(";");
+  Serial.print(!digitalRead(inputSelector));
+  Serial.print(";");
   Serial.print(shifter);
-  Serial.print("); LCPS: ");
+  Serial.print(";");
+  if (!leftClockwise) Serial.print("-");
   Serial.print(leftCyclePerSec);
-  Serial.print("; RCPS: ");
-  Serial.println(rightCyclePerSec);
-  //Serial.println(millis());
+  Serial.print(";");
+  if (!rightClockwise) Serial.print("-");
+  Serial.print(rightCyclePerSec);
+  Serial.print(";");
+  Serial.print(leftAcceleration);
+  Serial.print(";");
+  Serial.print(rightAcceleration);
+  Serial.println(";");
 }
 
 void setup() {
@@ -230,8 +237,17 @@ void setup() {
   if (_SERIAL) {
     Serial.begin(_SERIAL); // opens serial port
     Serial.setTimeout(10); // 10ms should be enough to receive few chars
-    Serial.println("\n         _    _\n         \\`../ |o_..__\n          (*)______(*).>\n");
+    Serial.println("\n         _    _\n         \\`../ |o_..__\n          (*)______(*).>\n\n");
     Serial.println("Hi there, CarOne is ready to drive.");
+    Serial.println("Commands:");
+    Serial.println("\t1\t Hijack on");
+    Serial.println("\t0\t Hijack off");
+    Serial.println("\tp\t Park");
+    Serial.println("\td\t Drive");
+    Serial.println("\tn\t Reset acceleration");
+    Serial.println("\tq\t Set left side acceleration min: -2900, max: 2900");
+    Serial.println("\tw\t Set left side acceleration min: -2900, max: 2900");
+    Serial.println("\nLast Command; Hijack; Shifter; Left Cycle Per Sec; Right Cycle Per Sec; Left Acceleration; Right Acceleration;");
   }
 
   // TODO: need to be controlled from outside
@@ -242,7 +258,7 @@ void loop() {
   static unsigned long pmTransmisson =  0;
   static unsigned long pmCalculateIncInPeriod =  0;
   static unsigned long pmListenControl =  0;
-  static unsigned long pmDebugInfo =  0;
+  static unsigned long pmSerialInfo =  0;
   static unsigned int transmissionPeriod = 450;
   static unsigned int transmissionCounter = 0;
   unsigned long currentMicros = micros();
@@ -274,9 +290,9 @@ void loop() {
 
   // delay 1s between debug info dump
   if (_SERIAL && _DEBUG) {
-    if (currentMicros - pmDebugInfo >= 2000000) {
-      pmDebugInfo = currentMicros;
-      debugInfo();
+    if (currentMicros - pmSerialInfo >= 2000000) {
+      pmSerialInfo = currentMicros;
+      serialInfo();
       currentMicros = micros();
     }
   }
