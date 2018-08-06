@@ -193,10 +193,12 @@ void calculateIncInPeriod() {
   * Increments changes on left hall effect sensor and detects direction.
   */
 void leftHallInc() {
-  debugPulse(debugPin1, 1);
+  debugPulse(debugPin1, 2);
   bool leftHallYellowState = digitalRead(leftHallYellowPin);
   if (!leftHallYellowState) {
+    debugPulse(debugPin1, 3);
     if (leftCyclePerSec < 15) {//only detect direction under one rotation/s
+      debugPulse(debugPin1, 4);
       if (digitalRead(leftHallBluePin)) {
         if (leftClockwise < 2) leftClockwise++;
       } else {
@@ -211,10 +213,12 @@ void leftHallInc() {
   * Increments changes on right hall effect sensor and detects direction.
   */
 void rightHallInc() {
-  debugPulse(debugPin1, 1);
+  debugPulse(debugPin1, 2);
   bool rightHallYellowState = digitalRead(rightHallYellowPin);
   if (!rightHallYellowState) {
+    debugPulse(debugPin1, 3);
     if (rightCyclePerSec < 15) {//only detect direction under one rotation/s
+      debugPulse(debugPin1, 4);
       if (digitalRead(rightHallBluePin)) {
         if (rightClockwise < 2) rightClockwise++;
       } else {
@@ -229,6 +233,7 @@ void rightHallInc() {
   * Handles interrupt.
   */
 void leftHallInterrupt() {
+  debugPulse(debugPin1, 1);
   leftHallInterrupted = micros() + 500;
 }
 
@@ -236,6 +241,7 @@ void leftHallInterrupt() {
   * Handles interrupt.
   */
 void rightHallInterrupt() {
+  debugPulse(debugPin1, 1);
   rightHallInterrupted = micros() + 500;
 }
 
@@ -249,7 +255,7 @@ void serialInfo() {
   if (leftClockwise < 0) Serial.print("-");
   Serial.print(leftCyclePerSec);
   Serial.print(";");
-  if (!rightClockwise < 0) Serial.print("-");
+  if (rightClockwise < 0) Serial.print("-");
   Serial.print(rightCyclePerSec);
   Serial.print(";");
   Serial.print(leftAcceleration);
@@ -295,53 +301,62 @@ void setup() {
  * handlers in one loop.
  */
 void loop() {
-  static unsigned long pmTransmisson =  0;
+  static unsigned long pmTx =  0;
   static unsigned long pmCalculateIncInPeriod =  0;
   static unsigned long pmListenControl =  0;
   static unsigned long pmSerialInfo =  0;
-  static unsigned int transmissionLength = _GYRO_FRAME_LENGTH;
-  static unsigned int transmissionCounter = 0;
+  static unsigned int txLength = _GYRO_FRAME_LENGTH;
+  static unsigned int txCounter = 0;
   unsigned long currentMicros = micros();
+  signed long microsTillNextTx = 0;
 
   // transmissions, just like gyro sensor does 
-  if (currentMicros - pmTransmisson >= transmissionLength) {
-    pmTransmisson = currentMicros;
+  if (currentMicros - pmTx >= txLength) {
+    pmTx = currentMicros;
     writeCurrentSpeed();
-    transmissionLength = (++transmissionCounter % _GYRO_FRAMES == 0)
+    txLength = (++txCounter % _GYRO_FRAMES == 0)
       ? _GYRO_FRAMES_LENGTH : _GYRO_FRAME_LENGTH;
     return;
+  } else {
+    microsTillNextTx = pmTx + txLength - currentMicros;
   }
 
-  if (leftHallInterrupted && leftHallInterrupted < currentMicros) {
+  if (leftHallInterrupted 
+      && leftHallInterrupted < currentMicros 
+      && microsTillNextTx > 50) { //it takes ~50us on 16MHz
     leftHallInc();
     leftHallInterrupted = 0;
     return;
   }
 
-  if (rightHallInterrupted && rightHallInterrupted < currentMicros) {
+  if (rightHallInterrupted 
+      && rightHallInterrupted < currentMicros
+      && microsTillNextTx > 50) {  //it takes ~50us on 16MHz
     rightHallInc();
     rightHallInterrupted = 0;
     return;
   }
 
-  if (currentMicros - pmCalculateIncInPeriod >= 250000) {
+  if (currentMicros - pmCalculateIncInPeriod >= 250000
+      && microsTillNextTx > 100) { //it takes ~100us on 16MHz
     pmCalculateIncInPeriod = currentMicros;
     calculateIncInPeriod();
     return;
   }
 
-  if (currentMicros - pmListenControl >= 50000) {
+  if (currentMicros - pmListenControl >= 50000
+      && microsTillNextTx > 50) {
     pmListenControl = currentMicros;
     listenControl();
     return;
   }
 
-  if (controlSerial && _DEBUG) {
-    if (currentMicros - pmSerialInfo >= 2000000) {
-      pmSerialInfo = currentMicros;
-      serialInfo();
-      return;
-    }
+  if (controlSerial 
+    && currentMicros - pmSerialInfo >= 2000000
+    && microsTillNextTx > 420) { //it takes ~420us on 16MHz
+    pmSerialInfo = currentMicros;
+    serialInfo(); 
+    return;
   }
 }
 
