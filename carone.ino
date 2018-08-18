@@ -1,6 +1,6 @@
 #include <SoftSerialParallelWrite.h> // SoftSerialParallelWrite library for parallel UART transmission
 
-#define _DEBUG 1
+#define _DEBUG 0
 #define _GYRO_SERIAL 26275
 #define _GYRO_FRAMES 10 // number of frames in one batch
 // Example:
@@ -9,7 +9,18 @@
 #define _GYRO_FRAME_LENGTH 450 // frame length
 #define _GYRO_FRAMES_LENGTH 875 // frame length + delay between batch
 
-const int controlSerial       =  9600; // bandwidth or 0 means turned off
+#define _SERIAL_CTRL 9600 // bandwidth or 0 means turned off
+#define _I2C_CTRL 100000 // bandwidth or 0 means turned off
+#define _I2C_BUS_ADDRESS 8
+
+#if _I2C_CTRL
+#include <Wire.h>
+#endif
+
+#if _DEBUG && _I2C_CTRL
+the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
+#endif
+
 const int debugPin2           =    A5; // debug during development
 const int debugPin1           =    A4; // debug during development
 const int inputSelector       =     7; // hijack gyro sensor communication
@@ -31,21 +42,20 @@ unsigned long rightCyclePerSec = 0;
 signed int leftClockwise = 0; // ccw: -3, -2, -1; cw: 0, 1, 2 
 signed int rightClockwise = 0; 
 
-
 SoftSerialParallelWrite mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
 
-enum controlOptions { bySerial, byI2C }; // control by serial input or pull up buttons
-int control = bySerial; // control set to button
+volatile byte i2cReg = 0xFF;
 char command = 'n'; //last received input by serial. n is no acceleration
 char shifter = 'P'; // [P]ark or [D]rive
 signed int leftAcceleration = 0;
 signed int rightAcceleration = 0;
 
-//
-// Debugging
-//
-// This function generates a brief pulse
-// for debugging or measuring on an oscilloscope.
+/***
+ * Debugging
+ *
+ * This function generates a brief pulse
+ * for debugging or measuring on an oscilloscope.
+ */
 #if _DEBUG
 inline void debugPulse(uint8_t pin, uint16_t count)
 {
@@ -57,7 +67,7 @@ inline void debugPulse(uint8_t pin, uint16_t count)
   }
 }
 #else
-inline void DebugPulse(uint8_t, uint16_t) {}
+inline void debugPulse(uint8_t, uint16_t) {}
 #endif
 
 /***
@@ -113,55 +123,6 @@ void writeCurrentSpeed() {
 }
 
 /***
- * Reads control from serial port.
- * Development and debugging purpose only.
- */
-void listenSerialControl() {
-  int parsedInt = 0;
-  if (Serial.available() > 0) {
-    command=Serial.read();
-    if (Serial.available() > 0) parsedInt = Serial.parseInt(); 
-    switch (command) {
-      case 'n':
-        leftAcceleration=0;
-        rightAcceleration=0;
-        break;
-      case 'q':
-        if (abs(parsedInt) <= maxAcceleration) leftAcceleration = parsedInt;
-        break;
-      case 'w':
-        if (abs(parsedInt) <= maxAcceleration) rightAcceleration = parsedInt;
-        break;
-      case '1':
-        digitalWrite(inputSelector, LOW); // turned on
-        break;
-      case '0':
-        digitalWrite(inputSelector, HIGH); //turned off
-        break;
-      case 'd':
-      case 'D':
-        shifter = 'D'; // drive
-        break;
-      case 'p':
-      case 'P':
-        shifter = 'P'; // park
-        break;
-    }
-  }
-}
-
-/***
- * Selects control.
- */
-void listenControl() {
-  if(control == bySerial){
-    listenSerialControl();
-  } else if (control == byI2C) {
-    // tbd
-  }
-}
-
-/***
   * Calculates last 4 averages of hall effect cycles 
   * and sets to leftCyclePerSec and rightCyclePerSec
   */
@@ -197,7 +158,7 @@ void leftHallInc() {
   bool leftHallYellowState = digitalRead(leftHallYellowPin);
   if (!leftHallYellowState) {
     debugPulse(debugPin1, 3);
-    if (leftCyclePerSec < 15) {//only detect direction under one rotation/s
+    if (leftCyclePerSec < 45) {//only detect direction under 3 rotation/s
       debugPulse(debugPin1, 4);
       if (digitalRead(leftHallBluePin)) {
         if (leftClockwise < 2) leftClockwise++;
@@ -217,9 +178,9 @@ void rightHallInc() {
   bool rightHallYellowState = digitalRead(rightHallYellowPin);
   if (!rightHallYellowState) {
     debugPulse(debugPin1, 3);
-    if (rightCyclePerSec < 15) {//only detect direction under one rotation/s
+    if (rightCyclePerSec < 45) {//only detect direction under 3 rotation/s
       debugPulse(debugPin1, 4);
-      if (digitalRead(rightHallBluePin)) {
+      if (!digitalRead(rightHallBluePin)) {
         if (rightClockwise < 2) rightClockwise++;
       } else {
         if (rightClockwise > -3) rightClockwise--;        
@@ -245,7 +206,53 @@ void rightHallInterrupt() {
   rightHallInterrupted = micros() + 500;
 }
 
-void serialInfo() {
+/***
+ * Reads control from serial port.
+ * For debugging purpose mostly.
+ */
+#if _SERIAL_CTRL
+inline void listenSerialControl() {
+  int parsedInt = 0;
+  if (Serial.available() > 0) {
+    command=Serial.read();
+    if (Serial.available() > 0) parsedInt = Serial.parseInt(); 
+    switch (command) {
+      case 'n':
+        leftAcceleration=0;
+        rightAcceleration=0;
+        break;
+      case 'q':
+        if (abs(parsedInt) <= maxAcceleration) leftAcceleration = parsedInt;
+        break;
+      case 'w':
+        if (abs(parsedInt) <= maxAcceleration) rightAcceleration = parsedInt;
+        break;
+      case '1':
+        digitalWrite(inputSelector, LOW); // turned on
+        break;
+      case '0':
+        digitalWrite(inputSelector, HIGH); //turned off
+        break;
+      case 'd':
+      case 'D':
+        shifter = 'D'; // drive
+        break;
+      case 'p':
+      case 'P':
+        shifter = 'P'; // park
+        break;
+    }
+  }
+}
+#else
+inline void listenSerialControl() {}
+#endif
+
+/***
+ * Print status info on hardware serial connection for mostly debugging purpose.
+ */
+#if _SERIAL_CTRL
+inline void serialInfo() {
   Serial.print(command);
   Serial.print(";");
   Serial.print(!digitalRead(inputSelector));
@@ -263,10 +270,184 @@ void serialInfo() {
   Serial.print(rightAcceleration);
   Serial.println(";");
 }
+#else
+inline void serialInfo() {}
+#endif
 
+/***
+ * Initializes hardware serial connection for mostly debugging purpose.
+ */
+#if _SERIAL_CTRL
+inline void serialInit() {
+  Serial.begin(_SERIAL_CTRL); // opens serial port
+  Serial.setTimeout(10); // 10ms should be enough to receive few chars
+  Serial.println("\n         _    _\n         \\`../ |o_..__\n          (*)______(*).>\n\n");
+  Serial.println("Hi there, CarOne is ready to drive.");
+  Serial.println("Commands:");
+  Serial.println("\t1\t Hijack on");
+  Serial.println("\t0\t Hijack off");
+  Serial.println("\tp\t Park");
+  Serial.println("\td\t Drive");
+  Serial.println("\tn\t Reset acceleration");
+  Serial.println("\tq\t Set left side acceleration min: -2900, max: 2900");
+  Serial.println("\tw\t Set left side acceleration min: -2900, max: 2900");
+  Serial.print("\nLast Command; Hijack; Shifter; Left Cycle Per Sec; ");
+  Serial.println("Right Cycle Per Sec; Left Acceleration; Right Acceleration;");
+}
+#else
+inline void serialInit() {}
+#endif
+
+/***
+ * Receives I2C data from master, what can use for control or set the reading
+ * intention.
+ */
+#if _I2C_CTRL
+inline void i2cReceiveEvent(int howMany) {
+  signed int si;
+  if (howMany) {
+    i2cReg = Wire.read();
+    // similarly to I2C address the least significant predict the intention of R/W
+    // therefore all write or set register numbers are even. 
+    switch (i2cReg) {
+      case B00000000: //turn off
+        digitalWrite(inputSelector, HIGH); //HIGH => off
+        break;
+      case B00000010: // turn on
+        digitalWrite(inputSelector, LOW); // LOW => on
+        break;
+      case B00000100: // park
+        shifter = 'P';
+        break;
+      case B00000110: // drive
+        shifter = 'D';
+        break;
+      case B00001000: // zero acceleration
+        leftAcceleration=0;
+        rightAcceleration=0;
+        break;
+      case B00001010: // left acceleration
+        if (howMany >= 3) {
+          si = Wire.read();  // receive high byte (overwrites previous reading)
+          si = si << 8;    // shift high byte to be high 8 bits
+          si |= Wire.read(); // receive low byte as lower 8 bits
+          leftAcceleration = si;
+        }
+        break;
+      case B00001110: // right acceleration
+        if (howMany >= 3) {
+          si = Wire.read();  // receive high byte (overwrites previous reading)
+          si = si << 8;    // shift high byte to be high 8 bits
+          si |= Wire.read(); // receive low byte as lower 8 bits
+          rightAcceleration = si;
+        }
+        break;
+      case B00010000: // left and right acceleration
+        if (howMany >= 5) {
+          si = Wire.read();  // receive high byte (overwrites previous reading)
+          si = si << 8;    // shift high byte to be high 8 bits
+          si |= Wire.read(); // receive low byte as lower 8 bits
+          leftAcceleration = si;
+          si = Wire.read();  // receive high byte (overwrites previous reading)
+          si = si << 8;    // shift high byte to be high 8 bits
+          si |= Wire.read(); // receive low byte as lower 8 bits
+          rightAcceleration = si;
+        }
+        break;
+    }
+    //prepare for read back the recent status
+    i2cReg |= B00000001;
+  }
+}
+#else
+inline void i2cReceiveEvent(int) {}
+#endif
+
+/***
+ * Responses to I2C request from master.
+ */
+#if _I2C_CTRL
+inline void i2cRequestEvent() {
+  byte buffer[5] = {i2cReg, 0, 0, 0, 0};
+  signed int si;
+  // similarly to I2C address the least significant predict the intention of R/W
+  // therefore all read register numbers are odd. 
+  switch (i2cReg) {
+    case B00000001: //turn off
+    case B00000011: //turn on
+      buffer[1] = byte(!digitalRead(inputSelector));
+      Wire.write(buffer, 2);
+      break;
+    case B00000101: // park
+    case B00000111: // drive
+      buffer[1] = shifter;
+      Wire.write(buffer, 2);
+      break;
+    case B00001001: // zero acceleration
+    case B00010001: // left and right acceleration
+      buffer[1] = byte((leftAcceleration >> 8) & 0x00FF);
+      buffer[2] = byte(leftAcceleration & 0x00FF);
+      buffer[3] = byte((rightAcceleration >> 8) & 0x00FF);
+      buffer[4] = byte(rightAcceleration & 0x00FF);
+      Wire.write(buffer, 5);
+      break;
+    case B00001011: // left acceleration
+      buffer[1] = byte((leftAcceleration >> 8) & 0x00FF);
+      buffer[2] = byte(leftAcceleration & 0x00FF);
+      Wire.write(buffer, 3);
+      break;
+    case B00001111: // right acceleration
+      buffer[1] = byte((rightAcceleration >> 8) & 0x00FF);
+      buffer[2] = byte(rightAcceleration & 0x00FF);
+      Wire.write(buffer, 3);
+      break;
+    case B00010011: // left speed
+      si = (leftClockwise < 0) ? -1 * leftCyclePerSec : leftCyclePerSec;
+      buffer[1] = byte((si >> 8) & 0x00FF);
+      buffer[2] = byte(si & 0x00FF);
+      Wire.write(buffer, 3);
+      break;
+    case B00010101: // right speed
+      si = (rightClockwise < 0) ? -1 * rightCyclePerSec : rightCyclePerSec;
+      buffer[1] = byte((si >> 8) & 0x00FF);
+      buffer[2] = byte(si & 0x00FF);
+      Wire.write(buffer, 3);
+      break;
+    default:
+      si = (leftClockwise < 0) ? -1 * leftCyclePerSec : leftCyclePerSec;
+      buffer[1] = byte((si >> 8) & 0x00FF);
+      buffer[2] = byte(si & 0x00FF);
+      si = (rightClockwise < 0) ? -1 * rightCyclePerSec : rightCyclePerSec;
+      buffer[3] = byte((si >> 8) & 0x00FF);
+      buffer[4] = byte(si & 0x00FF);
+      Wire.write(buffer, 5);
+  }
+}
+#else
+inline void i2cRequestEvent() {}
+#endif
+
+/***
+ * Initializes I2C wire connection for control.
+ */
+#if _SERIAL_CTRL
+inline void wireInit() {
+  Wire.begin(_I2C_BUS_ADDRESS); // join i2c bus
+  Wire.onRequest(i2cRequestEvent); // register event
+  Wire.onReceive(i2cReceiveEvent); // register event
+}
+#else
+inline void wireInit() {}
+#endif
+
+/***
+  * arduino setup
+  */
 void setup() {
-  pinMode(debugPin1, OUTPUT);
-  pinMode(debugPin2, OUTPUT);
+  if (_DEBUG) {
+    pinMode(debugPin1, OUTPUT);
+    pinMode(debugPin2, OUTPUT);
+  } 
   pinMode(leftHallYellowPin, INPUT);
   pinMode(leftHallBluePin, INPUT);
   pinMode(rightHallYellowPin, INPUT);
@@ -276,22 +457,8 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(leftHallYellowPin),leftHallInterrupt,FALLING);
   attachInterrupt(digitalPinToInterrupt(rightHallYellowPin),rightHallInterrupt,FALLING);
   mySerial.begin(_GYRO_SERIAL, 11); // hover board UART baud-rate and frame size
-  if (controlSerial) {
-    Serial.begin(controlSerial); // opens serial port
-    Serial.setTimeout(10); // 10ms should be enough to receive few chars
-    Serial.println("\n         _    _\n         \\`../ |o_..__\n          (*)______(*).>\n\n");
-    Serial.println("Hi there, CarOne is ready to drive.");
-    Serial.println("Commands:");
-    Serial.println("\t1\t Hijack on");
-    Serial.println("\t0\t Hijack off");
-    Serial.println("\tp\t Park");
-    Serial.println("\td\t Drive");
-    Serial.println("\tn\t Reset acceleration");
-    Serial.println("\tq\t Set left side acceleration min: -2900, max: 2900");
-    Serial.println("\tw\t Set left side acceleration min: -2900, max: 2900");
-    Serial.print("\nLast Command; Hijack; Shifter; Left Cycle Per Sec; ");
-    Serial.println("Right Cycle Per Sec; Left Acceleration; Right Acceleration;");
-  }
+  serialInit();
+  wireInit();
 }
 
 /***
@@ -344,19 +511,16 @@ void loop() {
     return;
   }
 
-  if (currentMicros - pmListenControl >= 50000
-      && microsTillNextTx > 50) {
-    pmListenControl = currentMicros;
-    listenControl();
-    return;
-  }
-
-  if (controlSerial 
-    && currentMicros - pmSerialInfo >= 2000000
-    && microsTillNextTx > 420) { //it takes ~420us on 16MHz
-    pmSerialInfo = currentMicros;
-    serialInfo(); 
-    return;
+  if (_SERIAL_CTRL) {
+    if (microsTillNextTx > 50) {
+      listenSerialControl();
+    }
+    if (currentMicros - pmSerialInfo >= 2000000
+      && microsTillNextTx > 200) { //it takes ~420us on 16MHz
+      pmSerialInfo = currentMicros;
+      serialInfo(); 
+      return;
+    }
   }
 }
 
