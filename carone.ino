@@ -9,8 +9,8 @@
 #define _GYRO_FRAME_LENGTH 450 // frame length
 #define _GYRO_FRAMES_LENGTH 875 // frame length + delay between batch
 
-#define _SERIAL_CTRL 9600 // bandwidth or 0 means turned off
-#define _I2C_CTRL 100000 // bandwidth or 0 means turned off
+#define _SERIAL_CTRL 9600 // bandwidth or 0 means disabled
+#define _I2C_CTRL 1 // 1 means enabled or 0 means disabled
 #define _I2C_BUS_ADDRESS 8
 
 #if _I2C_CTRL
@@ -227,10 +227,10 @@ inline void listenSerialControl() {
       case 'w':
         if (abs(parsedInt) <= maxAcceleration) rightAcceleration = parsedInt;
         break;
-      case '1':
+      case 'i':
         digitalWrite(inputSelector, LOW); // turned on
         break;
-      case '0':
+      case 'o':
         digitalWrite(inputSelector, HIGH); //turned off
         break;
       case 'd':
@@ -280,7 +280,7 @@ inline void serialInfo() {}
 #if _SERIAL_CTRL
 inline void serialInit() {
   Serial.begin(_SERIAL_CTRL); // opens serial port
-  Serial.setTimeout(10); // 10ms should be enough to receive few chars
+  Serial.setTimeout(5); // 5ms should be enough to receive few chars
   Serial.println("\n         _    _\n         \\`../ |o_..__\n          (*)______(*).>\n\n");
   Serial.println("Hi there, CarOne is ready to drive.");
   Serial.println("Commands:");
@@ -413,6 +413,7 @@ inline void i2cRequestEvent() {
       buffer[2] = byte(si & 0x00FF);
       Wire.write(buffer, 3);
       break;
+    case B00010111: // left and right speed
     default:
       si = (leftClockwise < 0) ? -1 * leftCyclePerSec : leftCyclePerSec;
       buffer[1] = byte((si >> 8) & 0x00FF);
@@ -430,7 +431,7 @@ inline void i2cRequestEvent() {}
 /***
  * Initializes I2C wire connection for control.
  */
-#if _SERIAL_CTRL
+#if _I2C_CTRL
 inline void wireInit() {
   Wire.begin(_I2C_BUS_ADDRESS); // join i2c bus
   Wire.onRequest(i2cRequestEvent); // register event
