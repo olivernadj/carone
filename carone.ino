@@ -33,9 +33,9 @@ const int maxAcceleration     =  2900; // measured value from gyro board at ~30 
 volatile unsigned long leftHallInterrupted = 0; //0 means not otherwise micro time stamp
 volatile unsigned long rightHallInterrupted = 0; //0 means not otherwise micro time stamp
 unsigned int leftIncrements = 0;
-unsigned long leftCyclePerSec = 0;
+unsigned long leftCyclePerSec = 0; //hall effect cycles. 
 unsigned int rightIncrements = 0;
-unsigned long rightCyclePerSec = 0;
+unsigned long rightCyclePerSec = 0; //hall effect cycles. 
 // although ccw status logically is a boolean, we need to avoid hall check error
 // with software solution. Increasing of the status on each sampling absorb the
 // occasional sampling errors.
@@ -106,12 +106,14 @@ void writeCurrentSpeed() {
         break;
       case 2:
       case 4:
-        mySerial.write(~leftAccelerationLowFrame, ~rightAccelerationLowFrame);
+        mySerial.write(~rightAccelerationLowFrame, ~leftAccelerationLowFrame);
+        //mySerial.write(~leftAccelerationLowFrame, ~rightAccelerationLowFrame);
         currentFrame++;
         break;
       case 3:
       case 5:
-        mySerial.write(~leftAccelerationHighFrame, ~rightAccelerationHighFrame);
+        mySerial.write(~rightAccelerationHighFrame, ~leftAccelerationHighFrame);
+        //mySerial.write(~leftAccelerationHighFrame, ~rightAccelerationHighFrame);
         currentFrame++;
         break;
       case 6:
