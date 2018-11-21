@@ -13,6 +13,8 @@
 #define _I2C_CTRL 1 // 1 means enabled or 0 means disabled
 #define _I2C_BUS_ADDRESS 8
 
+#define _DEFAULT_DIRECTION 0 // 0:acceleration, 1:target speed
+
 #if _I2C_CTRL
 #include <Wire.h>
 #endif
@@ -29,18 +31,19 @@ const int leftHallBluePin     =     4; // hall effect direction check
 const int rightHallYellowPin  =     3; // hall effect triggering
 const int leftHallYellowPin   =     2; // hall effect triggering
 const int maxAcceleration     =  2900; // measured value from gyro board at ~30 degree
+const int maxSpeed            =    80; // max controllable speed (before unchain)
 
 volatile unsigned long leftHallInterrupted = 0; //0 means not otherwise micro time stamp
 volatile unsigned long rightHallInterrupted = 0; //0 means not otherwise micro time stamp
 unsigned int leftIncrements = 0;
-unsigned long leftCyclePerSec = 0; //hall effect cycles. 
+unsigned long leftCyclePerSec = 0; //hall effect cycles.
 unsigned int rightIncrements = 0;
-unsigned long rightCyclePerSec = 0; //hall effect cycles. 
+unsigned long rightCyclePerSec = 0; //hall effect cycles.
 // although ccw status logically is a boolean, we need to avoid hall check error
 // with software solution. Increasing of the status on each sampling absorb the
 // occasional sampling errors.
-signed int leftClockwise = 0; // ccw: -3, -2, -1; cw: 0, 1, 2 
-signed int rightClockwise = 0; 
+signed int leftClockwise = 0; // ccw: -3, -2, -1; cw: 0, 1, 2
+signed int rightClockwise = 0;
 
 SoftSerialParallelWrite mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
 
@@ -49,6 +52,10 @@ char command = 'n'; //last received input by serial. n is no acceleration
 char shifter = 'P'; // [P]ark or [D]rive
 signed int leftAcceleration = 0;
 signed int rightAcceleration = 0;
+signed int leftTargetSpeed = 0;
+signed int rightTargetSpeed = 0;
+enum directions {Acceleration, Autocruise} directedby = _DEFAULT_DIRECTION;
+
 
 /***
  * Debugging
@@ -76,7 +83,7 @@ inline void debugPulse(uint8_t, uint16_t) {}
  * same frame size and baud-rate
  *
  * ATTENTION: the logical high and low has been inverted (to be align with NOT
- * gate on logic level shift from 5v to 3.3v) 
+ * gate on logic level shift from 5v to 3.3v)
  */
 void writeCurrentSpeed() {
   if (digitalRead(inputSelector) == HIGH) {
@@ -125,7 +132,7 @@ void writeCurrentSpeed() {
 }
 
 /***
-  * Calculates last 4 averages of hall effect cycles 
+  * Calculates last 4 averages of hall effect cycles
   * and sets to leftCyclePerSec and rightCyclePerSec
   */
 void calculateIncInPeriod() {
@@ -165,7 +172,7 @@ void leftHallInc() {
       if (digitalRead(leftHallBluePin)) {
         if (leftClockwise < 2) leftClockwise++;
       } else {
-        if (leftClockwise > -3) leftClockwise--;        
+        if (leftClockwise > -3) leftClockwise--;
       }
     }
     leftIncrements++;
@@ -185,7 +192,7 @@ void rightHallInc() {
       if (!digitalRead(rightHallBluePin)) {
         if (rightClockwise < 2) rightClockwise++;
       } else {
-        if (rightClockwise > -3) rightClockwise--;        
+        if (rightClockwise > -3) rightClockwise--;
       }
     }
     rightIncrements++;
@@ -217,17 +224,33 @@ inline void listenSerialControl() {
   int parsedInt = 0;
   if (Serial.available() > 0) {
     command=Serial.read();
-    if (Serial.available() > 0) parsedInt = Serial.parseInt(); 
+    if (Serial.available() > 0) parsedInt = Serial.parseInt();
     switch (command) {
       case 'n':
+        directedby = Acceleration;
         leftAcceleration=0;
         rightAcceleration=0;
         break;
+      case 'm':
+        directedby = Autocruise;
+        leftTargetSpeed=0;
+        rightTargetSpeed=0;
+        break;
       case 'q':
+        directedby = Acceleration;
         if (abs(parsedInt) <= maxAcceleration) leftAcceleration = parsedInt;
         break;
       case 'w':
+        directedby = Acceleration;
         if (abs(parsedInt) <= maxAcceleration) rightAcceleration = parsedInt;
+        break;
+      case 'a':
+        directedby = Autocruise;
+        if (abs(parsedInt) <= maxSpeed) leftTargetSpeed = parsedInt;
+        break;
+      case 's':
+        directedby = Autocruise;
+        if (abs(parsedInt) <= maxSpeed) rightTargetSpeed = parsedInt;
         break;
       case 'i':
         digitalWrite(inputSelector, LOW); // turned on
@@ -292,9 +315,13 @@ inline void serialInit() {
   Serial.println("\td\t Drive");
   Serial.println("\tn\t Reset acceleration");
   Serial.println("\tq\t Set left side acceleration min: -2900, max: 2900");
-  Serial.println("\tw\t Set left side acceleration min: -2900, max: 2900");
-  Serial.print("\nLast Command; Hijack; Shifter; Left Cycle Per Sec; ");
-  Serial.println("Right Cycle Per Sec; Left Acceleration; Right Acceleration;");
+  Serial.println("\tw\t Set right side acceleration min: -2900, max: 2900");
+  Serial.println("\tm\t Reset target speed");
+  Serial.println("\ta\t Set left target speed min: -80, max: 80");
+  Serial.println("\ts\t Set right target speed min: -80, max: 80");
+  Serial.print("\n1) Last Command; 2) Hijack; 3) Shifter; 4) Driected by; 5) Left Cycle Per Sec; ");
+  Serial.print("6) Left Cycle Per Sec; 7) Right Cycle Per Sec; 8) Left Acceleration;");
+  Serial.println("9) Right Acceleration; 10) Left target speed; 11) Right target speed;");
 }
 #else
 inline void serialInit() {}
@@ -310,7 +337,7 @@ inline void i2cReceiveEvent(int howMany) {
   if (howMany) {
     i2cReg = Wire.read();
     // similarly to I2C address the least significant predict the intention of R/W
-    // therefore all write or set register numbers are even. 
+    // therefore all write or set register numbers are even.
     switch (i2cReg) {
       case B00000000: //turn off
         digitalWrite(inputSelector, HIGH); //HIGH => off
@@ -325,11 +352,13 @@ inline void i2cReceiveEvent(int howMany) {
         shifter = 'D';
         break;
       case B00001000: // zero acceleration
+        directedby = Acceleration;
         leftAcceleration=0;
         rightAcceleration=0;
         break;
       case B00001010: // left acceleration
         if (howMany >= 3) {
+          directedby = Acceleration;
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
@@ -338,6 +367,7 @@ inline void i2cReceiveEvent(int howMany) {
         break;
       case B00001110: // right acceleration
         if (howMany >= 3) {
+          directedby = Acceleration;
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
@@ -346,6 +376,7 @@ inline void i2cReceiveEvent(int howMany) {
         break;
       case B00010000: // left and right acceleration
         if (howMany >= 5) {
+          directedby = Acceleration;
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
@@ -354,6 +385,37 @@ inline void i2cReceiveEvent(int howMany) {
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
           rightAcceleration = si;
+        }
+        break;
+      case B00011000: // left target speed
+        if (howMany >= 3) {
+          directedby = Autocruise;
+          si = Wire.read();  // receive high byte (overwrites previous reading)
+          si = si << 8;    // shift high byte to be high 8 bits
+          si |= Wire.read(); // receive low byte as lower 8 bits
+          leftTargetSpeed = si;
+        }
+        break;
+      case B00011010: // right target speed
+        if (howMany >= 3) {
+          directedby = Autocruise;
+          si = Wire.read();  // receive high byte (overwrites previous reading)
+          si = si << 8;    // shift high byte to be high 8 bits
+          si |= Wire.read(); // receive low byte as lower 8 bits
+          rightTargetSpeed = si;
+        }
+        break;
+      case B00011100: // left and right target speed
+        if (howMany >= 5) {
+          directedby = Autocruise;
+          si = Wire.read();  // receive high byte (overwrites previous reading)
+          si = si << 8;    // shift high byte to be high 8 bits
+          si |= Wire.read(); // receive low byte as lower 8 bits
+          leftTargetSpeed = si;
+          si = Wire.read();  // receive high byte (overwrites previous reading)
+          si = si << 8;    // shift high byte to be high 8 bits
+          si |= Wire.read(); // receive low byte as lower 8 bits
+          rightTargetSpeed = si;
         }
         break;
     }
@@ -373,7 +435,7 @@ inline void i2cRequestEvent() {
   byte buffer[5] = {i2cReg, 0, 0, 0, 0};
   signed int si;
   // similarly to I2C address the least significant predict the intention of R/W
-  // therefore all read register numbers are odd. 
+  // therefore all read register numbers are odd.
   switch (i2cReg) {
     case B00000001: //turn off
     case B00000011: //turn on
@@ -416,7 +478,6 @@ inline void i2cRequestEvent() {
       Wire.write(buffer, 3);
       break;
     case B00010111: // left and right speed
-    default:
       si = (leftClockwise < 0) ? -1 * leftCyclePerSec : leftCyclePerSec;
       buffer[1] = byte((si >> 8) & 0x00FF);
       buffer[2] = byte(si & 0x00FF);
@@ -424,6 +485,23 @@ inline void i2cRequestEvent() {
       buffer[3] = byte((si >> 8) & 0x00FF);
       buffer[4] = byte(si & 0x00FF);
       Wire.write(buffer, 5);
+    case B00011001: // left target speed
+      buffer[1] = byte((leftTargetSpeed >> 8) & 0x00FF);
+      buffer[2] = byte(leftTargetSpeed & 0x00FF);
+      Wire.write(buffer, 3);
+      break;
+    case B00011011: // right target speed
+      buffer[1] = byte((rightTargetSpeed >> 8) & 0x00FF);
+      buffer[2] = byte(rightTargetSpeed & 0x00FF);
+      Wire.write(buffer, 3);
+      break;
+    case B00011101: // left and right target speed
+      buffer[1] = byte((leftTargetSpeed >> 8) & 0x00FF);
+      buffer[2] = byte(leftTargetSpeed & 0x00FF);
+      buffer[3] = byte((rightTargetSpeed >> 8) & 0x00FF);
+      buffer[4] = byte(rightTargetSpeed & 0x00FF);
+      Wire.write(buffer, 5);
+      break;
   }
 }
 #else
@@ -450,7 +528,7 @@ void setup() {
   if (_DEBUG) {
     pinMode(debugPin1, OUTPUT);
     pinMode(debugPin2, OUTPUT);
-  } 
+  }
   pinMode(leftHallYellowPin, INPUT);
   pinMode(leftHallBluePin, INPUT);
   pinMode(rightHallYellowPin, INPUT);
@@ -466,7 +544,7 @@ void setup() {
 
 /***
  * The loop function is responsible for (time) even handling.
- * The checks are ordered by importance. Maximum one hander function can be 
+ * The checks are ordered by importance. Maximum one hander function can be
  * called in each loop. E.g. serial write will not be delayed with multiple
  * handlers in one loop.
  */
@@ -480,7 +558,7 @@ void loop() {
   unsigned long currentMicros = micros();
   signed long microsTillNextTx = 0;
 
-  // transmissions, just like gyro sensor does 
+  // transmissions, just like gyro sensor does
   if (currentMicros - pmTx >= txLength) {
     pmTx = currentMicros;
     writeCurrentSpeed();
@@ -491,15 +569,15 @@ void loop() {
     microsTillNextTx = pmTx + txLength - currentMicros;
   }
 
-  if (leftHallInterrupted 
-      && leftHallInterrupted < currentMicros 
+  if (leftHallInterrupted
+      && leftHallInterrupted < currentMicros
       && microsTillNextTx > 50) { //it takes ~50us on 16MHz
     leftHallInc();
     leftHallInterrupted = 0;
     return;
   }
 
-  if (rightHallInterrupted 
+  if (rightHallInterrupted
       && rightHallInterrupted < currentMicros
       && microsTillNextTx > 50) {  //it takes ~50us on 16MHz
     rightHallInc();
@@ -521,9 +599,8 @@ void loop() {
     if (currentMicros - pmSerialInfo >= 2000000
       && microsTillNextTx > 200) { //it takes ~420us on 16MHz
       pmSerialInfo = currentMicros;
-      serialInfo(); 
+      serialInfo();
       return;
     }
   }
 }
-
