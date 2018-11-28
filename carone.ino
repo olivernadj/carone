@@ -23,15 +23,16 @@
 the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 #endif
 
-const int debugPin2           =    A5; // debug during development
-const int debugPin1           =    A4; // debug during development
-const int inputSelector       =     7; // hijack gyro sensor communication
-const int rightHallBluePin    =     5; // hall effect direction check
-const int leftHallBluePin     =     4; // hall effect direction check
-const int rightHallYellowPin  =     3; // hall effect triggering
-const int leftHallYellowPin   =     2; // hall effect triggering
-const int maxAcceleration     =  2900; // measured value from gyro board at ~30 degree
-const int maxSpeed            =    80; // max controllable speed (before unchain)
+const int debugPin2            =    A5; // debug during development
+const int debugPin1            =    A4; // debug during development
+const int inputSelector        =     7; // hijack gyro sensor communication
+const int rightHallBluePin     =     5; // hall effect direction check
+const int leftHallBluePin      =     4; // hall effect direction check
+const int rightHallYellowPin   =     3; // hall effect triggering
+const int leftHallYellowPin    =     2; // hall effect triggering
+const int maxAcceleration      =  2900; // measured value from gyro board at ~30 degree
+const int maxSpeed             =    80; // max controllable speed (before unchain)
+const signed int autocruiseAcc =    80; // acceleration used for reach the target speed
 
 volatile unsigned long leftHallInterrupted = 0; //0 means not otherwise micro time stamp
 volatile unsigned long rightHallInterrupted = 0; //0 means not otherwise micro time stamp
@@ -159,6 +160,26 @@ void calculateIncInPeriod() {
   timestamp = millis();
 }
 
+void calculateAutocruise() {
+  signed int lCPS, rCPS;
+  lCPS = (leftClockwise < 0) ? -1 * int(leftCyclePerSec) : int(leftCyclePerSec); 
+  if (abs(lCPS - leftTargetSpeed) < 3) {
+    leftAcceleration = 0; 
+  } else if (lCPS < leftTargetSpeed) {
+    leftAcceleration = 80;
+  } else if (lCPS > leftTargetSpeed) {
+    leftAcceleration = -80;
+  }
+  rCPS = (rightClockwise < 0) ? -1 * int(rightCyclePerSec) : int(rightCyclePerSec); 
+  if (abs(rCPS - rightTargetSpeed) < 3) {
+    rightAcceleration = 0; 
+  } else if (rCPS < rightTargetSpeed) {
+    rightAcceleration = 80;
+  } else if (rCPS > rightTargetSpeed) {
+    rightAcceleration = -80;
+  }
+}
+
 /***
   * Increments changes on left hall effect sensor and detects direction.
   */
@@ -284,15 +305,21 @@ inline void serialInfo() {
   Serial.print(";");
   Serial.print(shifter);
   Serial.print(";");
+  Serial.print(directedby);
+  Serial.print(";cps:");
   if (leftClockwise < 0) Serial.print("-");
   Serial.print(leftCyclePerSec);
   Serial.print(";");
   if (rightClockwise < 0) Serial.print("-");
   Serial.print(rightCyclePerSec);
-  Serial.print(";");
+  Serial.print(";acc:");
   Serial.print(leftAcceleration);
   Serial.print(";");
-  Serial.print(rightAcceleration);
+  Serial.print(rightAcceleration);  
+  Serial.print(";ts:");
+  Serial.print(leftTargetSpeed);
+  Serial.print(";");
+  Serial.print(rightTargetSpeed);
   Serial.println(";");
 }
 #else
@@ -551,6 +578,7 @@ void setup() {
 void loop() {
   static unsigned long pmTx =  0;
   static unsigned long pmCalculateIncInPeriod =  0;
+  static unsigned long pmAutocruise =  0;
   static unsigned long pmListenControl =  0;
   static unsigned long pmSerialInfo =  0;
   static unsigned int txLength = _GYRO_FRAME_LENGTH;
@@ -589,6 +617,14 @@ void loop() {
       && microsTillNextTx > 100) { //it takes ~100us on 16MHz
     pmCalculateIncInPeriod = currentMicros;
     calculateIncInPeriod();
+    return;
+  }
+
+
+  if (directedby == Autocruise && currentMicros - pmAutocruise >= 250000
+      && microsTillNextTx > 100) { //it takes ~100us on 16MHz
+    pmAutocruise = currentMicros;
+    calculateAutocruise();
     return;
   }
 
