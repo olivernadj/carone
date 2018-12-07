@@ -1,15 +1,16 @@
 #include <Wire.h>
 
 #define _I2C_BUS_ADDRESS 8
-#define _MAX_SPEED 40
-#define _MAX_ACCELERATION 100
-#define _MAX_IDDLE_TIME 2500 // after x millis will go to park mode
-
+#define _MAX_FW_SPEED 20
+#define _MAX_BW_SPEED 15
+#define _MAX_IDDLE_TIME 0 // after x millis will go to park mode
+#define _MAX_BREAK_GREACE 500 // for x millis stays break mode
 
 signed int leftCyclePerSec   = 0; //hall effect cycles. 
 signed int rightCyclePerSec  = 0; //hall effect cycles. 
-signed int leftAcceleration  = 0;
-signed int rightAcceleration = 0;
+
+signed int leftTargetSpeed = 0;
+signed int rightTargetSpeed = 0;
 
 byte i2cBuffer [32]; //i2c read or write buffer
 
@@ -54,10 +55,12 @@ byte i2cWrite(byte reg, uint8_t quantity) {
 }
 
 void serialInfo() {
-  Serial.print("La:");
-  Serial.print(leftAcceleration);
-  Serial.print(";Ra:");
-  Serial.print(rightAcceleration);
+  byte sw = !digitalRead(L1Pin) << 3 | !digitalRead(L2Pin) << 2 | !digitalRead(R2Pin) << 1 | !digitalRead(R1Pin);
+  Serial.print(sw, BIN);
+  Serial.print("Lts:");
+  Serial.print(leftTargetSpeed);
+  Serial.print(";Rts:");
+  Serial.print(rightTargetSpeed);
   Serial.print(";Ls:");
   Serial.print(leftCyclePerSec);
   Serial.print(";Rs:");
@@ -72,79 +75,121 @@ void speedCheck() {
   leftCyclePerSec = i2cBuffer[1];
   leftCyclePerSec = leftCyclePerSec << 8;
   leftCyclePerSec |= i2cBuffer[2];
-  if (leftCyclePerSec > 2 * _MAX_SPEED) {
-    leftCyclePerSec = 2 * _MAX_SPEED;
-  } else if (leftCyclePerSec < 2 * -_MAX_SPEED) {
-    leftCyclePerSec = 2 * -_MAX_SPEED;
-  }
   rightCyclePerSec = i2cBuffer[3];
   rightCyclePerSec = rightCyclePerSec << 8;
   rightCyclePerSec |= i2cBuffer[4];
-  if (rightCyclePerSec > 2 * _MAX_SPEED) {
-    rightCyclePerSec = 2 * _MAX_SPEED;
-  } else if (rightCyclePerSec < 2 * -_MAX_SPEED) {
-    rightCyclePerSec = 2 * -_MAX_SPEED;
-  }
 }
 
-void txAcceleration() {
-  i2cBuffer[0] = (leftAcceleration >> 8) & 0xFF;
-  i2cBuffer[1] = leftAcceleration & 0xFF;
-  i2cBuffer[2] = (rightAcceleration >> 8) & 0xFF;
-  i2cBuffer[3] = rightAcceleration & 0xFF;
-  i2cWrite(B00010000, 4);
+void txSpeed() {
+  static signed int leftLastSpeed = 0;
+  static signed int rightLastSpeed = 0;
+  if (leftLastSpeed != leftTargetSpeed || rightLastSpeed != rightTargetSpeed) {
+    i2cBuffer[0] = (leftTargetSpeed >> 8) & 0xFF;
+    i2cBuffer[1] = leftTargetSpeed & 0xFF;
+    i2cBuffer[2] = (rightTargetSpeed >> 8) & 0xFF;
+    i2cBuffer[3] = rightTargetSpeed & 0xFF;
+    i2cWrite(B00011100, 4);
+    leftLastSpeed = leftTargetSpeed;
+    rightLastSpeed = rightTargetSpeed;
+  }
 }
 
 void buttonCheck() {
-  static unsigned long ts2ParkMode = 0;
-  bool L1PinState = digitalRead(L1Pin) == LOW;
-  bool L2PinState = digitalRead(L2Pin) == LOW;
-  bool R2PinState = digitalRead(R2Pin) == LOW;
-  bool R1PinState = digitalRead(R1Pin) == LOW;
-
-  signed int leftSpeed   = -leftCyclePerSec; 
-  signed int rightSpeed  = rightCyclePerSec;
-  signed int centerSpeed = (leftSpeed + rightSpeed) / 2;
-
-  float leftAcc  = 0;
-  float rightAcc = 0;
-
-  if (L2PinState || R2PinState) { // Park mode
-    if (drive) {
-      drive = false;
-      driveChanged = true;
+  static unsigned long tsParkMode = 0;
+  static unsigned long tsGraceBrake = 0;
+  byte sw = !digitalRead(L1Pin) << 3 | !digitalRead(L2Pin) << 2 | !digitalRead(R2Pin) << 1 | !digitalRead(R1Pin);
+  if (tsGraceBrake < millis()) {
+    switch (sw) {
+      case B0000:
+        leftTargetSpeed = 0;
+        rightTargetSpeed = 0;
+        if (drive && tsParkMode < millis()) {
+          drive = false;
+          driveChanged = true;
+        }
+        break;
+      case B0001: // right only go forward
+        leftTargetSpeed = 0;
+        rightTargetSpeed = _MAX_FW_SPEED;
+        tsParkMode = millis() + _MAX_IDDLE_TIME;
+        if (!drive) {
+          drive = true;
+          driveChanged = true;
+        }
+        break;
+      case B0010: // right only go backward
+        leftTargetSpeed = 0;
+        rightTargetSpeed = -_MAX_BW_SPEED;
+        tsParkMode = millis() + _MAX_IDDLE_TIME;
+        if (!drive) {
+          drive = true;
+          driveChanged = true;
+        }
+        break;
+      case B0100: // left only goes backward
+        leftTargetSpeed = _MAX_BW_SPEED;
+        rightTargetSpeed = 0;
+        tsParkMode = millis() + _MAX_IDDLE_TIME;
+        if (!drive) {
+          drive = true;
+          driveChanged = true;
+        }
+        break;
+      case B0101: // left goes backward, right goes forward
+        leftTargetSpeed = _MAX_BW_SPEED;
+        rightTargetSpeed = _MAX_FW_SPEED;
+        tsParkMode = millis() + _MAX_IDDLE_TIME;
+        if (!drive) {
+          drive = true;
+          driveChanged = true;
+        }
+        break;
+      case B0110: // left and right go backward
+        leftTargetSpeed = _MAX_BW_SPEED;
+        rightTargetSpeed = -_MAX_BW_SPEED;
+        tsParkMode = millis() + _MAX_IDDLE_TIME;
+        if (!drive) {
+          drive = true;
+          driveChanged = true;
+        }
+        break;
+      case B1001: // left and right go forward
+        leftTargetSpeed = -_MAX_FW_SPEED;
+        rightTargetSpeed = _MAX_FW_SPEED;
+        tsParkMode = millis() + _MAX_IDDLE_TIME;
+        if (!drive) {
+          drive = true;
+          driveChanged = true;
+        }
+        break;
+      case B1010: // left goes forward, right goes backward
+        leftTargetSpeed = -_MAX_FW_SPEED;
+        rightTargetSpeed = -_MAX_BW_SPEED;
+        tsParkMode = millis() + _MAX_IDDLE_TIME;
+        if (!drive) {
+          drive = true;
+          driveChanged = true;
+        }
+        break;
+      case B1000: // left only goes forward
+        leftTargetSpeed = -_MAX_FW_SPEED;
+        rightTargetSpeed = 0;
+        tsParkMode = millis() + _MAX_IDDLE_TIME;
+        if (!drive) {
+          drive = true;
+          driveChanged = true;
+        }
+        break;
+      default:
+        rightTargetSpeed = 0;
+        leftTargetSpeed = 0;
+        if (drive) {
+          drive = false;
+          driveChanged = true;
+        }
+        tsGraceBrake = millis() + _MAX_BREAK_GREACE;
     }
-  } else {
-    if (L1PinState || R1PinState) { //acceleration happen
-      if (!drive) {
-        drive = true;
-        driveChanged = true;
-      }
-      ts2ParkMode = millis() + _MAX_IDDLE_TIME;
-    } else {
-      if (drive && ts2ParkMode < millis()) {
-        drive = false;
-        driveChanged = true;
-      } 
-    }
-    if (L1PinState) {
-      leftAcc = (float)_MAX_ACCELERATION * ((float)_MAX_SPEED - (float)leftSpeed) / (float)_MAX_SPEED;
-    } else if (R1PinState) {
-      leftAcc = 0;
-    } else {
-      leftAcc = (float)_MAX_ACCELERATION * (0.0f - (float)leftSpeed) / (float)_MAX_SPEED;
-    }
-    if (R1PinState) {
-      rightAcc = (float)_MAX_ACCELERATION * ((float)_MAX_SPEED - (float)rightSpeed) / (float)_MAX_SPEED;
-    } else if (L1PinState) {
-      rightAcc = 0;
-    } else {
-      rightAcc = (float)_MAX_ACCELERATION * (0.0f - (float)rightSpeed) / (float)_MAX_SPEED;
-    }
-    leftAcc = -leftAcc;
   }
-  leftAcceleration = (int)leftAcc;
-  rightAcceleration = (int)rightAcc;
 }
 
 void setup() {
@@ -185,9 +230,9 @@ void loop() {
     speedCheck();
     return;
   }
-  if (currentMicros - pmTx >= 250000) {
+  if (currentMicros - pmTx >= 100000) {
     pmTx = currentMicros;
-    txAcceleration();
+    txSpeed();
     return;
   }
   if (currentMicros - pmSerialInfo >= 2000000) {

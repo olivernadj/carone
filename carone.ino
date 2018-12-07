@@ -39,10 +39,11 @@ the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 // Maximum allowed speed before the safety parking more activated.
 // The hover board tend to loose control above that speed.
 #define _MAX_SPEED 40 // Halt changes per sec. (15 changes = 1 wheel rotation).
-#define _AUTOCRUISE_ACC 80 // Applied max acceleration in auto-cruise function.
-#define _AUTOCRUISE_ACC_STEPS 5 // The acceleration increases in each loop with steps till max or till other condition meet. 
+#define _AUTOCRUISE_ACC 160 // Applied max acceleration in auto-cruise function.
+#define _AUTOCRUISE_ACC_STEPS 7 // The acceleration increases in each loop with steps till max or till other condition meet. 
+#define _AUTOCRUISE_START_ACC_SPEED 5 // Under this speed the acceleration will goes up to _AUTOCRUISE_ACC. 
 #define _AUTOCRUISE_TARGET_TOLERANCE 3 // 0 acceleration if the actual and target speed differ less than this.
-#define _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR 2 // The acceleration also depends on the difference of the target and actual speed. This value limit acceleration to x times speed difference.  
+#define _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR 3 // The acceleration also depends on the difference of the target and actual speed. This value limit acceleration to x times speed difference.  
 // Settings for hall sensor of the wheel.
 #define _HALL_DIRECTION_DETECT_LIMIT 30 // Detects direction (cw,ccw) under this hall changes/s limit.
 // Although ccw status logically is a boolean, we need to avoid hall check errors. The implemented software solution is to incrementally enforcing the status on each sampling. This method absorbs occasional sampling errors.
@@ -186,36 +187,41 @@ void calculateIncInPeriod() {
   * Calculates necessary acceleration to catch up with target speed
   */
 void calculateAutocruise() {
-  signed int lCps, rCps, lCpsDiff, rCpsDiff;
-  lCps = (leftClockwise < 0) ? -1 * int(leftCyclePerSec) : int(leftCyclePerSec); 
-  lCpsDiff = leftTargetSpeed - lCps;
-  if (abs(lCpsDiff) < _AUTOCRUISE_TARGET_TOLERANCE) {
-    leftAcceleration = 0; 
-  } else if (lCpsDiff > 0) {
-    if (leftAcceleration < _AUTOCRUISE_ACC) leftAcceleration += _AUTOCRUISE_ACC_STEPS;
-    else leftAcceleration = _AUTOCRUISE_ACC;
-    if (lCps > _AUTOCRUISE_ACC_STEPS && leftAcceleration > lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
-      leftAcceleration = lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+  if (shifter == 'D') {
+    signed int lCps, rCps, lCpsDiff, rCpsDiff;
+    lCps = (leftClockwise < 0) ? -1 * int(leftCyclePerSec) : int(leftCyclePerSec); 
+    lCpsDiff = leftTargetSpeed - lCps;
+    if (abs(lCpsDiff) < _AUTOCRUISE_TARGET_TOLERANCE) {
+      leftAcceleration = 0; 
+    } else if (lCpsDiff > 0) {
+      if (leftAcceleration < _AUTOCRUISE_ACC) leftAcceleration += _AUTOCRUISE_ACC_STEPS;
+      else leftAcceleration = _AUTOCRUISE_ACC;
+      if (lCps > _AUTOCRUISE_START_ACC_SPEED && leftAcceleration > lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
+        leftAcceleration = lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+    } else {
+      if (leftAcceleration > -_AUTOCRUISE_ACC) leftAcceleration -= _AUTOCRUISE_ACC_STEPS;
+      else leftAcceleration = -_AUTOCRUISE_ACC;
+      if (lCps < -_AUTOCRUISE_START_ACC_SPEED && leftAcceleration < lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
+        leftAcceleration = lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+    }
+    rCps = (rightClockwise < 0) ? -1 * int(rightCyclePerSec) : int(rightCyclePerSec); 
+    rCpsDiff = rightTargetSpeed - rCps;
+    if (abs(rCpsDiff) < _AUTOCRUISE_TARGET_TOLERANCE) {
+      rightAcceleration = 0; 
+    } else if (rCpsDiff > 0) {
+      if (rightAcceleration < _AUTOCRUISE_ACC) rightAcceleration += _AUTOCRUISE_ACC_STEPS;
+      else rightAcceleration = _AUTOCRUISE_ACC;
+      if (rCps > _AUTOCRUISE_START_ACC_SPEED && rightAcceleration > rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
+        rightAcceleration = rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+    } else {
+      if (rightAcceleration > -_AUTOCRUISE_ACC) rightAcceleration -= _AUTOCRUISE_ACC_STEPS;
+      else rightAcceleration = -_AUTOCRUISE_ACC;
+      if (rCps < -_AUTOCRUISE_START_ACC_SPEED && rightAcceleration < rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
+        rightAcceleration = rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+    }
   } else {
-    if (leftAcceleration > -_AUTOCRUISE_ACC) leftAcceleration -= _AUTOCRUISE_ACC_STEPS;
-    else leftAcceleration = -_AUTOCRUISE_ACC;
-    if (lCps < -_AUTOCRUISE_ACC_STEPS && leftAcceleration < lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
-      leftAcceleration = lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
-  }
-  rCps = (rightClockwise < 0) ? -1 * int(rightCyclePerSec) : int(rightCyclePerSec); 
-  rCpsDiff = rightTargetSpeed - rCps;
-  if (abs(rCpsDiff) < _AUTOCRUISE_TARGET_TOLERANCE) {
-    rightAcceleration = 0; 
-  } else if (rCpsDiff > 0) {
-    if (rightAcceleration < _AUTOCRUISE_ACC) rightAcceleration += _AUTOCRUISE_ACC_STEPS;
-    else rightAcceleration = _AUTOCRUISE_ACC;
-    if (rCps > _AUTOCRUISE_ACC_STEPS && rightAcceleration > rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
-      rightAcceleration = rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
-  } else {
-    if (rightAcceleration > -_AUTOCRUISE_ACC) rightAcceleration -= _AUTOCRUISE_ACC_STEPS;
-    else rightAcceleration = -_AUTOCRUISE_ACC;
-    if (rCps < -_AUTOCRUISE_ACC_STEPS && rightAcceleration < rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
-      rightAcceleration = rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+    leftAcceleration = 0;
+    rightAcceleration = 0;
   }
 }
 
