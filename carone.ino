@@ -679,7 +679,7 @@ void loop() {
   }
 
   if (directedby == Autocruise && currentMicros - pmAutocruise >= 250000
-      && microsTillNextTx > 100) {
+      && microsTillNextTx > 100) { // it takes ~20us on 16MHz
     pmAutocruise = currentMicros;
     calculateAutocruise();
     return;
