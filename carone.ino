@@ -1,3 +1,4 @@
+#include <Wire.h> // I2C Wire library.
 #include <SoftSerialParallelWrite.h> // SoftSerialParallelWrite library for parallel UART transmission.
 
 // A4 and A5 can be used for debug purpose only if not used for I2C. The debug signal can be read by digital analyzer or oscilloscope.
@@ -21,9 +22,6 @@
 #define _I2C_CTRL 1 // 1 means enabled or 0 means disabled.
 #define _I2C_BUS_ADDRESS 8
 
-#if _I2C_CTRL
-#include <Wire.h> // I2C Wire library.
-#endif
 #if _DEBUG && _I2C_CTRL // Throw compile error if both pin debug and I2C enabled.
 the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 #endif
@@ -39,11 +37,11 @@ the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 // Maximum allowed speed before the safety parking more activated.
 // The hover board tend to loose control above that speed.
 #define _MAX_SPEED 40 // Halt changes per sec. (15 changes = 1 wheel rotation).
-#define _AUTOCRUISE_ACC 160 // Applied max acceleration in auto-cruise function.
-#define _AUTOCRUISE_ACC_STEPS 7 // The acceleration increases in each loop with steps till max or till other condition meet. 
+#define _AUTOCRUISE_ACC 90 // Applied max acceleration in auto-cruise function.
+#define _AUTOCRUISE_ACC_STEPS 15 // The acceleration increases in each loop with steps till max or till other condition meet. 
 #define _AUTOCRUISE_START_ACC_SPEED 5 // Under this speed the acceleration will goes up to _AUTOCRUISE_ACC. 
-#define _AUTOCRUISE_TARGET_TOLERANCE 3 // 0 acceleration if the actual and target speed differ less than this.
-#define _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR 3 // The acceleration also depends on the difference of the target and actual speed. This value limit acceleration to x times speed difference.  
+#define _AUTOCRUISE_TARGET_TOLERANCE 0 // 0 acceleration if the actual and target speed differ less than this.
+#define _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR 5 // The acceleration also depends on the difference of the target and actual speed. This value limit acceleration to x times speed difference.  
 // Settings for hall sensor of the wheel.
 #define _HALL_DIRECTION_DETECT_LIMIT 30 // Detects direction (cw,ccw) under this hall changes/s limit.
 // Although ccw status logically is a boolean, we need to avoid hall check errors. The implemented software solution is to incrementally enforcing the status on each sampling. This method absorbs occasional sampling errors.

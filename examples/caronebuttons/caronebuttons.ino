@@ -14,11 +14,15 @@ signed int rightTargetSpeed = 0;
 
 byte i2cBuffer [32]; //i2c read or write buffer
 
-const int driveLed = 13;
-const int L1Pin    = 11; // digital pin connected to switch output
-const int L2Pin    = 10; // digital pin connected to switch output
-const int R2Pin    =  9; // digital pin connected to switch output
-const int R1Pin    =  8; // digital pin connected to switch output
+const int driveLed    = 12;
+const int L1Pin       = 11; // digital pin connected to switch output
+const int L2Pin       = 10; // digital pin connected to switch output
+const int R2Pin       =  9; // digital pin connected to switch output
+const int R1Pin       =  8; // digital pin connected to switch output
+const int buzzer      =  6;
+const int leftBtnLed  =  7;
+const int rightBtnLed =  5;
+
 
 bool drive         = false;
 bool driveChanged  = false;
@@ -78,6 +82,12 @@ void speedCheck() {
   rightCyclePerSec = i2cBuffer[3];
   rightCyclePerSec = rightCyclePerSec << 8;
   rightCyclePerSec |= i2cBuffer[4];
+  if (drive) {
+    tone(buzzer, 100 + abs(leftCyclePerSec) + abs(rightCyclePerSec));
+  } else {
+    noTone(buzzer);
+  }
+
 }
 
 void txSpeed() {
@@ -92,6 +102,8 @@ void txSpeed() {
     leftLastSpeed = leftTargetSpeed;
     rightLastSpeed = rightTargetSpeed;
   }
+  digitalWrite(leftBtnLed, (bool)abs(leftTargetSpeed));
+  digitalWrite(rightBtnLed, (bool)abs(rightTargetSpeed));
 }
 
 void buttonCheck() {
@@ -198,6 +210,9 @@ void setup() {
   pinMode(R2Pin, INPUT_PULLUP);
   pinMode(R1Pin, INPUT_PULLUP);
   pinMode(driveLed, OUTPUT);
+  pinMode(leftBtnLed, OUTPUT);
+  pinMode(rightBtnLed, OUTPUT);
+  pinMode(buzzer, OUTPUT);
   digitalWrite(driveLed, HIGH);
   delay(500);
   digitalWrite(driveLed, LOW);
@@ -208,7 +223,7 @@ void setup() {
   delay(500);
   digitalWrite(driveLed, LOW);
   delay(500);
-  Wire.begin();        // join i2c bus (address optional for master)  
+  Wire.begin();        // join i2c bus (address optional for master)
 }
 
 
@@ -218,6 +233,7 @@ void loop() {
   static unsigned long pmButtonCheck =  0;
   static unsigned long pmSerialInfo =  0;
   static unsigned long pmHijack =  0;
+  static unsigned long pmDrive =  0;
   unsigned long currentMicros = micros();
 
   if (currentMicros - pmButtonCheck >= 100000) {
@@ -255,6 +271,12 @@ void loop() {
     // make sure hijack will happen and stay
     pmHijack = currentMicros;
     i2cWrite(B10, 0);
+    return;
+  }
+  if (drive && currentMicros - pmDrive >= 1500000) {
+    // make sure drive is on
+    pmDrive = currentMicros;
+    i2cWrite(B110, 0);
     return;
   }
 }

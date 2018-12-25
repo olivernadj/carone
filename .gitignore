@@ -1,0 +1,8 @@
+*.idea
+.DS_Store
+
+tmp/
+*.hex
+
+#Ipython Notebook
+.ipynb_checkpoints
