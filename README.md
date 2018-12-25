@@ -9,9 +9,11 @@ Wheel diameter | 17 cm
 Wheel circumference | 53.4 cm
 Wheel revolution | 15 hall cycles
 Max controllable speed | 142 cm/s
+Max single side speed | ~300 cm/s
 
 ### Conversions
 Conversions between common units of speed
+
 Base value | hall cycles | RPM | cm/s
 --- | --- | --- | ---
 **hall cycles** | 1 | 4 | 3.56
