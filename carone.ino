@@ -63,21 +63,23 @@ const int leftHallBluePin      =  4; // Same as above, but for the right wheel.
 const int rightHallYellowPin   =  3; // Hall effect triggering, as interrupt.
 const int leftHallYellowPin    =  2; // Same as above, but for the right wheel
 
-signed long leftIncrements   = 0; // Hall effect changes since last calculation
-signed long rightIncrements  = 0; // Same as above, but for the right wheel
-signed long leftActualCmPS   = 0; // Measured Absolute wheel speed in cm/s. More about units in README.md
-signed long rightActualCmPS  = 0; // Same as above, but for the right wheel
-signed long leftActualAcc    = 0; // Measured wheel acceleration.
-signed long rightActualAcc   = 0; // Same as above, but for the right wheel
-signed int leftForce         = 0; // Accelerating force. A wired unit what gyro extension board sends to motherboard based on its horizontal angle.
-signed int rightForce        = 0; // Same as above, but for the right side
-signed int leftTargetCmPS    = 0; // Target speed (wheel RMP) in auto-cruise direction mode
-signed int rightTargetCmPS   = 0; // Same as above, but for the right wheel
-signed int leftClockwise     = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
-signed int rightClockwise    = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
+signed int leftIncrements   = 0; // Hall effect changes since last calculation
+signed int rightIncrements  = 0; // Same as above, but for the right wheel
+signed int leftActualCmPS   = 0; // Measured Absolute wheel speed in cm/s. More about units in README.md
+signed int rightActualCmPS  = 0; // Same as above, but for the right wheel
+signed int leftActualAcc    = 0; // Measured wheel acceleration.
+signed int rightActualAcc   = 0; // Same as above, but for the right wheel
+signed int leftForce        = 0; // Accelerating force. A wired unit what gyro extension board sends to motherboard based on its horizontal angle.
+signed int rightForce       = 0; // Same as above, but for the right side
+signed int leftTargetCmPS   = 0; // Target speed (wheel RMP) in auto-cruise direction mode
+signed int rightTargetCmPS  = 0; // Same as above, but for the right wheel
+signed int leftClockwise    = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
+signed int rightClockwise   = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
 
 char command = 'n'; //last received input by serial. n is no acceleration
 char shifter = 'P'; // [P]ark or [D]rive
+bool leftDrive = false; // Used for single wheel control
+bool rightDrive = false; // Same as above
 
 enum directions {Acceleration, Autocruise} directedby = _DEFAULT_DIRECTION;
 
@@ -129,7 +131,8 @@ void writeCurrentSpeed() {
     const uint16_t parkEndSignal = 0xFC00 | (170 << 1);
 
     static unsigned int currentFrame = 6;
-    static uint16_t endSignal = parkEndSignal;
+    static uint16_t leftEndSignal = parkEndSignal;
+    static uint16_t rightEndSignal = parkEndSignal;
     static uint16_t leftForceLowFrame;
     static uint16_t leftForceHighFrame;
     static uint16_t rightForceLowFrame;
@@ -142,7 +145,18 @@ void writeCurrentSpeed() {
         leftForceHighFrame = 0xFC00 | (((-leftForce >> 8) & 0xFF) << 1); // Apply invert logic
         rightForceLowFrame = 0xFC00 | ((rightForce & 0xFF) << 1);
         rightForceHighFrame = 0xFC00 | (((rightForce >> 8) & 0xFF) << 1);
-        endSignal = (shifter == 'D') ? driveEndSignal : parkEndSignal ;
+        if (shifter == 'D') {
+          if (directedby == Autocruise) {
+            leftEndSignal = (leftDrive) ? driveEndSignal : parkEndSignal ;
+            rightEndSignal = (rightDrive) ? driveEndSignal : parkEndSignal ;
+          } else {
+            leftEndSignal = driveEndSignal;
+            rightEndSignal = driveEndSignal;
+          }
+        } else {
+          leftEndSignal = parkEndSignal;
+          rightEndSignal = parkEndSignal;
+        }
         currentFrame++;
         break;
       case 2:
@@ -156,7 +170,7 @@ void writeCurrentSpeed() {
         currentFrame++;
         break;
       case 6:
-        mySerial.write(~endSignal, ~endSignal);
+        mySerial.write(~leftEndSignal, ~rightEndSignal);
         currentFrame = 1;
         break;
     }
@@ -164,28 +178,31 @@ void writeCurrentSpeed() {
 }
 
 /***
-  * Calculates last 3 averages of hall effect cycles
+  * Calculates averages of last 2 samples of the hall effect cycles
   * and sets to leftActualCmPS and rightActualCmPS
+  * INPORTANT: It must be called in every 178 millis
+  *            Initially: 3560 / timeElipsed
+  *            if timeElipsed = 356/2 => 3560/178 = 20
+  *            as we make an average 20 = 10 + 10
   */
-void calculateIncInPeriod(unsigned long ts) {
+void calculateIncInPeriod() {
   debugPulse(debugPin1, 1);
-  static unsigned long lastTs = 0;
-  static signed long leftRecentCmPS = 0, rightRecentCmPS = 0;
-  signed long timeElipsed = 0;
-  if (lastTs) {
-    timeElipsed = (ts - lastTs) / 10;
-    // 356 = 3.56cm/s * 100ms
-    leftActualCmPS = (leftClockwise < 0 ? -1 : 1) * (356 * leftIncrements) / timeElipsed;
-    // a = dV / Dt
-    leftActualAcc = 100 * (leftActualCmPS - leftRecentCmPS) / timeElipsed; // cm/s^2
-    leftRecentCmPS = leftActualCmPS;
-    rightActualCmPS =  (rightClockwise < 0 ? -1 : 1) * (356 * rightIncrements) / timeElipsed;
-    rightActualAcc = 100 * (rightActualCmPS - rightRecentCmPS) / timeElipsed; // cm/s^2
-    rightRecentCmPS = rightActualCmPS;
+  static unsigned int chpsL1 = 0, chpsL2 = 0;
+  static unsigned int chpsR1 = 0, chpsR2 = 0;
+  static bool chooseOne = false;
+  if (chooseOne) {
+    chpsL1 = (leftClockwise < 0 ? -10 : 10) * leftIncrements;
+    chpsR1 =  (rightClockwise < 0 ? -10 : 10) * rightIncrements;
+    chooseOne = false;
+  } else {
+    chpsL2 = (leftClockwise < 0 ? -10 : 10) * leftIncrements;
+    chpsR2 =  (rightClockwise < 0 ? -10 : 10) * rightIncrements;
+    chooseOne = true;
   }
+  leftActualCmPS = chpsL1 + chpsL2;
+  rightActualCmPS = chpsR1 + chpsR2;
   leftIncrements = 0;
   rightIncrements = 0;
-  lastTs = ts;
   debugPulse(debugPin1, 2);
 }
 
@@ -194,7 +211,12 @@ void calculateIncInPeriod(unsigned long ts) {
   * @todo: need to be implemented
   */
 void calculateAutocruise() {
-  leftForce = 0;
+  if (leftTargetCmPS != 0) {
+    leftDrive = true;    
+  } else {
+    leftDrive = false;        
+  }
+  leftForce = leftTargetCmPS;
   rightForce = 0;
 }
 
@@ -316,29 +338,29 @@ inline void listenSerialControl() {}
  */
 #if _SERIAL_CTRL
 inline void serialInfo() {
-  // Serial.print(command);
-  // Serial.print(";");
-  // Serial.print(!digitalRead(inputSelector));
-  // Serial.print(";");
-  // Serial.print(shifter);
-  // Serial.print(";");
-  // Serial.print(directedby);
-  // Serial.print(";cm/s:");
+  Serial.print(command);
+  Serial.print(";");
+  Serial.print(!digitalRead(inputSelector));
+  Serial.print(";");
+  Serial.print(shifter);
+  Serial.print(";");
+  Serial.print(directedby);
+  Serial.print(";cm/s:");
   Serial.print(leftActualCmPS);
   Serial.print(";");
   Serial.print(rightActualCmPS);
-  // Serial.print(";F:");
-  // Serial.print(leftForce);
-  // Serial.print(";");
-  // Serial.print(rightForce);
-  // Serial.print(";ts:");
-  // Serial.print(leftTargetCmPS);
-  // Serial.print(";");
-  // Serial.print(rightTargetCmPS);
-  // Serial.print(";dc:");
-  // Serial.print(leftDirectionChanged);
-  // Serial.print(";");
-  // Serial.print(rightDirectionChanged);
+  Serial.print(";F:");
+  Serial.print(leftForce);
+  Serial.print(";");
+  Serial.print(rightForce);
+  Serial.print(";ts:");
+  Serial.print(leftTargetCmPS);
+  Serial.print(";");
+  Serial.print(rightTargetCmPS);
+  Serial.print(";dc:");
+  Serial.print(leftDirectionChanged);
+  Serial.print(";");
+  Serial.print(rightDirectionChanged);
   Serial.println(";");
 }
 #else
@@ -634,10 +656,10 @@ void loop() {
     return;
   }
 
-  if (currentMicros - pmCalculateIncInPeriod >= 200000
+  if (currentMicros - pmCalculateIncInPeriod >= 175000
       && microsTillNextTx > 120) { //it takes ~120us on 16MHz
     pmCalculateIncInPeriod = currentMicros;
-    calculateIncInPeriod(currentMicros / 1000);
+    calculateIncInPeriod();
     return;
   }
 
