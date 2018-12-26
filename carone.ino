@@ -170,7 +170,7 @@ void writeCurrentSpeed() {
         currentFrame++;
         break;
       case 6:
-        mySerial.write(~leftEndSignal, ~rightEndSignal);
+        mySerial.write(~rightEndSignal, ~leftEndSignal);
         currentFrame = 1;
         break;
     }
@@ -186,7 +186,7 @@ void writeCurrentSpeed() {
   *            as we make an average 20 = 10 + 10
   */
 void calculateIncInPeriod() {
-  debugPulse(debugPin1, 1);
+  // debugPulse(debugPin1, 1);
   static unsigned int chpsL1 = 0, chpsL2 = 0;
   static unsigned int chpsR1 = 0, chpsR2 = 0;
   static bool chooseOne = false;
@@ -203,7 +203,7 @@ void calculateIncInPeriod() {
   rightActualCmPS = chpsR1 + chpsR2;
   leftIncrements = 0;
   rightIncrements = 0;
-  debugPulse(debugPin1, 2);
+  // debugPulse(debugPin1, 2);
 }
 
 /***
@@ -216,7 +216,7 @@ void calculateAutocruise() {
   } else {
     leftDrive = false;        
   }
-  leftForce = leftTargetCmPS;
+  leftForce = leftTargetCmPS * 10;
   rightForce = 0;
 }
 
@@ -278,56 +278,71 @@ void rightHallInterrupt() {
  */
 #if _SERIAL_CTRL
 inline void listenSerialControl() {
+  char ch;
+  static char c;
+  static String toParse = "";
   int parsedInt = 0;
-  if (Serial.available() > 0) {
-    command=Serial.read();
-    if (Serial.available() > 0) parsedInt = Serial.parseInt();
-    switch (command) {
-      case 'n':
-        directedby = Acceleration;
-        leftForce=0;
-        rightForce=0;
-        break;
-      case 'm':
-        directedby = Autocruise;
-        leftTargetCmPS=0;
-        rightTargetCmPS=0;
-        break;
-      case 'q':
-        directedby = Acceleration;
-        if (abs(parsedInt) <= _MAX_GYRO_ACCELERATION) leftForce = parsedInt;
-        break;
-      case 'w':
-        directedby = Acceleration;
-        if (abs(parsedInt) <= _MAX_GYRO_ACCELERATION) rightForce = parsedInt;
-        break;
-      case 'a':
-        directedby = Autocruise;
-        if (abs(parsedInt) <= _MAX_SPEED) leftTargetCmPS = parsedInt;
-        break;
-      case 's':
-        directedby = Autocruise;
-        if (abs(parsedInt) <= _MAX_SPEED) rightTargetCmPS = parsedInt;
-        break;
-      case 'i':
-        digitalWrite(inputSelector, LOW); // turned on
-        break;
-      case 'o':
-        digitalWrite(inputSelector, HIGH); //turned off
-        break;
-      case 'd':
-      case 'D':
-        shifter = 'D'; // drive
-        break;
-      case 'p':
-      case 'P':
-        shifter = 'P'; // park
-        break;
-      case 'l':
-        serialInfo();
-        break;
+  while (Serial.available() > 0) {
+    ch=Serial.read();
+    if (ch == ';') {
+      if (toParse.length() > 0) {
+        parsedInt = toParse.toInt();
+        toParse = "";
+      } else {
+        parsedInt = 0;
+      }
+      command = c;
+      switch (command) {
+        case 'n':
+          directedby = Acceleration;
+          leftForce=0;
+          rightForce=0;
+          break;
+        case 'm':
+          directedby = Autocruise;
+          leftTargetCmPS=0;
+          rightTargetCmPS=0;
+          break;
+        case 'q':
+          directedby = Acceleration;
+          if (abs(parsedInt) <= _MAX_GYRO_ACCELERATION) leftForce = parsedInt;
+          break;
+        case 'w':
+          directedby = Acceleration;
+          if (abs(parsedInt) <= _MAX_GYRO_ACCELERATION) rightForce = parsedInt;
+          break;
+        case 'a':
+          directedby = Autocruise;
+          if (abs(parsedInt) <= _MAX_SPEED) leftTargetCmPS = parsedInt;
+          break;
+        case 's':
+          directedby = Autocruise;
+          if (abs(parsedInt) <= _MAX_SPEED) rightTargetCmPS = parsedInt;
+          break;
+        case 'i':
+          digitalWrite(inputSelector, LOW); // turned on
+          break;
+        case 'o':
+          digitalWrite(inputSelector, HIGH); //turned off
+          break;
+        case 'd':
+        case 'D':
+          shifter = 'D'; // drive
+          break;
+        case 'p':
+        case 'P':
+          shifter = 'P'; // park
+          break;
+        case 'l':
+          serialInfo();
+          break;
+      }
+    } else if (isDigit(ch) || ch == '-') {
+      toParse += ch;
+    } else if (isAlpha(ch)) {
+      c = ch;
     }
-  }
+  }  
 }
 #else
 inline void listenSerialControl() {}
@@ -657,7 +672,7 @@ void loop() {
   }
 
   if (currentMicros - pmCalculateIncInPeriod >= 175000
-      && microsTillNextTx > 120) { //it takes ~120us on 16MHz
+      && microsTillNextTx > 25) { //it takes ~25us on 16MHz
     pmCalculateIncInPeriod = currentMicros;
     calculateIncInPeriod();
     return;
