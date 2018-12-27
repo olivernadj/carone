@@ -1,4 +1,5 @@
 #include <SoftSerialParallelWrite.h> // SoftSerialParallelWrite library for parallel UART transmission.
+#include <Wire.h> // I2C Wire library.
 
 // A4 and A5 can be used for debug purpose only if not used for I2C. The debug signal can be read by digital analyzer or oscilloscope.
 #define _DEBUG 0
@@ -21,9 +22,6 @@
 #define _I2C_CTRL 1 // 1 means enabled or 0 means disabled.
 #define _I2C_BUS_ADDRESS 8
 
-#if _I2C_CTRL
-#include <Wire.h> // I2C Wire library.
-#endif
 #if _DEBUG && _I2C_CTRL // Throw compile error if both pin debug and I2C enabled.
 the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 #endif
