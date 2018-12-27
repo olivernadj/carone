@@ -1,4 +1,3 @@
-#include <Wire.h> // I2C Wire library.
 #include <SoftSerialParallelWrite.h> // SoftSerialParallelWrite library for parallel UART transmission.
 
 // A4 and A5 can be used for debug purpose only if not used for I2C. The debug signal can be read by digital analyzer or oscilloscope.
@@ -22,72 +21,85 @@
 #define _I2C_CTRL 1 // 1 means enabled or 0 means disabled.
 #define _I2C_BUS_ADDRESS 8
 
+#if _I2C_CTRL
+#include <Wire.h> // I2C Wire library.
+#endif
 #if _DEBUG && _I2C_CTRL // Throw compile error if both pin debug and I2C enabled.
 the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 #endif
 
 // ===========+=== SETTINGS FOR DRIVING MECHANISM ============================//
 // This settings are basically fine tuning to an instance of hover board.
-// Here you can change the driving dynamic, sensors logic, etc.   
+// Here you can change the driving dynamic, sensors logic, etc.
 //
 // Default directing mode
 #define _DEFAULT_DIRECTION 0 // 0:acceleration, 1:target speed.
-// Measured output from gyro board at ~30 degree.
-#define _MAX_GYRO_ACCELERATION 2900
-// Maximum allowed speed before the safety parking more activated.
+// Measured output from gyro board at ~30 degree horizontal angle is 2900.
+#define _MAX_GYRO_ACCELERATION 240
+// Maximum allowed speed before the safety parking mode activated.
 // The hover board tend to loose control above that speed.
-#define _MAX_SPEED 40 // Halt changes per sec. (15 changes = 1 wheel rotation).
-#define _AUTOCRUISE_ACC 90 // Applied max acceleration in auto-cruise function.
-#define _AUTOCRUISE_ACC_STEPS 15 // The acceleration increases in each loop with steps till max or till other condition meet. 
-#define _AUTOCRUISE_START_ACC_SPEED 5 // Under this speed the acceleration will goes up to _AUTOCRUISE_ACC. 
-#define _AUTOCRUISE_TARGET_TOLERANCE 0 // 0 acceleration if the actual and target speed differ less than this.
-#define _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR 5 // The acceleration also depends on the difference of the target and actual speed. This value limit acceleration to x times speed difference.  
+#define _MAX_SPEED 142 // Max controllable speed in cm/s. More about units in README.md
+#define _SAFETY_SPEED_LIMIT 180 // Force parking mode above that speed. 
+#define _AUTOCRUISE_SINGLE_START_FORCE_MPL 3 // Initial force would be X times of target speed. With 0 initial force the acceleration is sluggish. Single mode means only one wheel is working and the acceleration force related to speed is linear.
+#define _AUTOCRUISE_SINGLE_FORCE_INC 5 // Force adjusting increments or decrements.
+#define _AUTOCRUISE_DUAL_START_FORCE_MPL 1 // Initial force would be X times of target speed. Dual mode means both wheels are working and the acceleration happens exponentially, therefor need to converge to zero. Zero force means keep velocity.
+#define _AUTOCRUISE_DUAL_FORCE_INC 5 // Force adjusting increments or decrements. Only used for acceleration from 0 speed.
 // Settings for hall sensor of the wheel.
-#define _HALL_DIRECTION_DETECT_LIMIT 30 // Detects direction (cw,ccw) under this hall changes/s limit.
+#define _HALL_DIRECTION_DETECT_LIMIT 120 // Detects direction (cw,ccw) under this wheel RPM limit.
 // Although ccw status logically is a boolean, we need to avoid hall check errors. The implemented software solution is to incrementally enforcing the status on each sampling. This method absorbs occasional sampling errors.
 #define _HALL_CLOCKWISE_PROBABILITY_CW 6 // Maximum cw enforcement. Example: ccw: -3, -2, -1; cw: 0, 1, 2
 #define _HALL_CLOCKWISE_PROBABILITY_CCW -7 // Maximum cw enforcement. Example: ccw: -3, -2, -1; cw: 0, 1, 2
-#define _HALL_INTERRUP_GRACE_PERIOD 500 // Interrupt handler will wait x micros before read pin status. 
+#define _HALL_INTERRUP_GRACE_PERIOD 500 // Interrupt handler will wait x micros before read pin status.
 
 // =========== END OF SETTINGS FOR DRIVING MECHANISM =========================//
 
 
-const int debugPin2            =    A5; // Used for Debug only if _DEBUG enabled
-const int debugPin1            =    A4; // Used for Debug only if _DEBUG enabled
-const int inputSelector        =     7; // Hijack gyro sensor communication. It controls the source for multiplexer (gyro-daughterboard VS CarOne).
-const int rightHallBluePin     =     5; // Hall effect direction check. 
-const int leftHallBluePin      =     4; // Same as above, but for the right wheel.
-const int rightHallYellowPin   =     3; // Hall effect triggering, as interrupt.
-const int leftHallYellowPin    =     2; // Same as above, but for the right wheel
-
-volatile unsigned long leftHallInterrupted = 0; //0 means no interruption, otherwise interruption happened at a micro time stamp + _HALL_INTERRUP_GRACE_PERIOD
-volatile unsigned long rightHallInterrupted = 0; //Same as above, but for the right wheel.
-unsigned int leftIncrements = 0; //Hall effect changes since last calculation
-unsigned int rightIncrements = 0; // Same as above, but for the right wheel
-unsigned long leftCyclePerSec = 0; //Hall effect cycles per second
-unsigned long rightCyclePerSec = 0; // Same as above, but for the right wheel
-signed int leftClockwise = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
-signed int rightClockwise = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
-
 SoftSerialParallelWrite mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
+const int debugPin2            = A5; // Used for Debug only if _DEBUG enabled
+const int debugPin1            = A4; // Used for Debug only if _DEBUG enabled
+const int inputSelector        =  7; // Hijack gyro sensor communication. It controls the source for multiplexer (gyro-daughterboard VS CarOne).
+const int rightHallBluePin     =  5; // Hall effect direction check.
+const int leftHallBluePin      =  4; // Same as above, but for the right wheel.
+const int rightHallYellowPin   =  3; // Hall effect triggering, as interrupt.
+const int leftHallYellowPin    =  2; // Same as above, but for the right wheel
 
-volatile byte i2cReg = 0xFF; // Storage for I2C internal register address. 
+signed int leftIncrements   = 0; // Hall effect changes since last calculation
+signed int rightIncrements  = 0; // Same as above, but for the right wheel
+signed int leftActualCmPS   = 0; // Measured Absolute wheel speed in cm/s. More about units in README.md
+signed int rightActualCmPS  = 0; // Same as above, but for the right wheel
+signed int leftActualAcc    = 0; // Measured wheel acceleration.
+signed int rightActualAcc   = 0; // Same as above, but for the right wheel
+signed int leftForce        = 0; // Accelerating force. A wired unit what gyro extension board sends to motherboard based on its horizontal angle.
+signed int rightForce       = 0; // Same as above, but for the right side
+signed int leftTargetCmPS   = 0; // Target speed (wheel RMP) in auto-cruise direction mode
+signed int rightTargetCmPS  = 0; // Same as above, but for the right wheel
+signed int leftClockwise    = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
+signed int rightClockwise   = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
+
 char command = 'n'; //last received input by serial. n is no acceleration
 char shifter = 'P'; // [P]ark or [D]rive
-signed int leftAcceleration = 0;
-signed int rightAcceleration = 0;
-signed int leftTargetSpeed = 0;
-signed int rightTargetSpeed = 0;
+bool leftDrive = false; // Used for single wheel control
+bool rightDrive = false; // Same as above
+
 enum directions {Acceleration, Autocruise} directedby = _DEFAULT_DIRECTION;
 
-signed int leftDirectionChanged = 0;
-signed int rightDirectionChanged = 0;
+volatile byte i2cReg = 0xFF; // Storage for I2C internal register address.
+
+volatile unsigned long leftHallInterrupted  = 0; //0 means no interruption, otherwise interruption happened at a micro time stamp + _HALL_INTERRUP_GRACE_PERIOD
+volatile unsigned long rightHallInterrupted = 0; //Same as above, but for the right wheel.
+
+signed int leftDirectionChanged  = 0; // For debugging purpose. It count the direction changes and dumps to serialInfo()
+signed int rightDirectionChanged = 0; // Same as above
+
 
 /***
  * Debugging
  *
  * This function generates a brief pulse
  * for debugging or measuring on an oscilloscope.
+ * Example:
+ *   debugPulse(debugPin1, 1); // expected signal on pin1: __|__
+ *   debugPulse(debugPin2, 3); // expected signal on pin2: __|_|_|__
  */
 #if _DEBUG
 inline void debugPulse(uint8_t pin, uint16_t count) {
@@ -102,9 +114,9 @@ inline void debugPulse(uint8_t, uint16_t) {}
 #endif
 
 /***
- * Transmits imitated UART signal, just like gyro sensor.
- * Uses SoftSerialParallelWrite library what can do multiple UART transmission with
- * same frame size and baud-rate
+ * Transmits imitated UART signal, just like gyro sensor does.
+ * Uses SoftSerialParallelWrite library what enables to do multiple UART
+ * transmission with same frame size and baud-rate
  *
  * ATTENTION: the logical high and low has been inverted (to be align with NOT
  * gate on logic level shift from 5v to 3.3v)
@@ -119,34 +131,46 @@ void writeCurrentSpeed() {
     const uint16_t parkEndSignal = 0xFC00 | (170 << 1);
 
     static unsigned int currentFrame = 6;
-    static uint16_t endSignal = parkEndSignal;
-    static uint16_t leftAccelerationLowFrame;
-    static uint16_t leftAccelerationHighFrame;
-    static uint16_t rightAccelerationLowFrame;
-    static uint16_t rightAccelerationHighFrame;
+    static uint16_t leftEndSignal = parkEndSignal;
+    static uint16_t rightEndSignal = parkEndSignal;
+    static uint16_t leftForceLowFrame;
+    static uint16_t leftForceHighFrame;
+    static uint16_t rightForceLowFrame;
+    static uint16_t rightForceHighFrame;
 
     switch (currentFrame) {
       case 1:
         mySerial.write(~startSignal, ~startSignal);
-        leftAccelerationLowFrame = 0xFC00 | ((leftAcceleration & 0xFF) << 1);
-        leftAccelerationHighFrame = 0xFC00 | (((leftAcceleration >> 8) & 0xFF) << 1);
-        rightAccelerationLowFrame = 0xFC00 | ((rightAcceleration & 0xFF) << 1);
-        rightAccelerationHighFrame = 0xFC00 | (((rightAcceleration >> 8) & 0xFF) << 1);
-        endSignal = (shifter == 'D') ? driveEndSignal : parkEndSignal ;
+        leftForceLowFrame = 0xFC00 | ((-leftForce & 0xFF) << 1); // Apply invert logic
+        leftForceHighFrame = 0xFC00 | (((-leftForce >> 8) & 0xFF) << 1); // Apply invert logic
+        rightForceLowFrame = 0xFC00 | ((rightForce & 0xFF) << 1);
+        rightForceHighFrame = 0xFC00 | (((rightForce >> 8) & 0xFF) << 1);
+        if (shifter == 'D') {
+          if (directedby == Autocruise) {
+            leftEndSignal = (leftDrive) ? driveEndSignal : parkEndSignal ;
+            rightEndSignal = (rightDrive) ? driveEndSignal : parkEndSignal ;
+          } else {
+            leftEndSignal = driveEndSignal;
+            rightEndSignal = driveEndSignal;
+          }
+        } else {
+          leftEndSignal = parkEndSignal;
+          rightEndSignal = parkEndSignal;
+        }
         currentFrame++;
         break;
       case 2:
       case 4:
-        mySerial.write(~rightAccelerationLowFrame, ~leftAccelerationLowFrame);
+        mySerial.write(~rightForceLowFrame, ~leftForceLowFrame);
         currentFrame++;
         break;
       case 3:
       case 5:
-        mySerial.write(~rightAccelerationHighFrame, ~leftAccelerationHighFrame);
+        mySerial.write(~rightForceHighFrame, ~leftForceHighFrame);
         currentFrame++;
         break;
       case 6:
-        mySerial.write(~endSignal, ~endSignal);
+        mySerial.write(~rightEndSignal, ~leftEndSignal);
         currentFrame = 1;
         break;
     }
@@ -154,86 +178,139 @@ void writeCurrentSpeed() {
 }
 
 /***
-  * Calculates last 4 averages of hall effect cycles
-  * and sets to leftCyclePerSec and rightCyclePerSec
+  * Calculates averages of last 2 samples of the hall effect cycles
+  * and sets to leftActualCmPS and rightActualCmPS
+  * INPORTANT: It must be called in every 178 millis
+  *            Initially: 3560 / timeElipsed
+  *            if timeElipsed = 356/2 => 3560/178 = 20
+  *            as we make an average 20 = 10 + 10
   */
 void calculateIncInPeriod() {
-  static unsigned long timestamp = 0;
-  static unsigned int chpsL1 = 0, chpsL2 = 0, chpsL3 = 0, chpsL4 = 0;
-  static unsigned int chpsR1 = 0, chpsR2 = 0, chpsR3 = 0, chpsR4 = 0;
-  unsigned long timeElipsed = 0;
-  if (timestamp) {
-    chpsL4 = chpsL3;
-    chpsL3 = chpsL2;
-    chpsL2 = chpsL1;
-    timeElipsed = millis() - timestamp;
-    chpsL1 =  (1000 * (long)leftIncrements) / (long)timeElipsed;
-    leftCyclePerSec = (chpsL1 + chpsL2 + chpsL3 + chpsL4) / 4;
-    chpsR4 = chpsR3;
-    chpsR3 = chpsR2;
-    chpsR2 = chpsR1;
-    timeElipsed = millis() - timestamp;
-    chpsR1 =  (1000 * (long)rightIncrements) / (long)timeElipsed;
-    rightCyclePerSec = (chpsR1 + chpsR2 + chpsR3 + chpsR4) / 4;
+  debugPulse(debugPin1, 3);
+  static unsigned int chpsL1 = 0, chpsL2 = 0;
+  static unsigned int chpsR1 = 0, chpsR2 = 0;
+  static bool chooseOne = false;
+  static bool safetyReady = false;
+  if (chooseOne) {
+    chpsL1 = (leftClockwise < 0 ? -10 : 10) * leftIncrements;
+    chpsR1 =  (rightClockwise < 0 ? -10 : 10) * rightIncrements;
+    chooseOne = false;
+  } else {
+    chpsL2 = (leftClockwise < 0 ? -10 : 10) * leftIncrements;
+    chpsR2 =  (rightClockwise < 0 ? -10 : 10) * rightIncrements;
+    chooseOne = true;
   }
+  leftActualCmPS = chpsL1 + chpsL2;
+  rightActualCmPS = chpsR1 + chpsR2;
   leftIncrements = 0;
   rightIncrements = 0;
-  timestamp = millis();
+  if (shifter == 'D' && (abs(leftActualCmPS) > _SAFETY_SPEED_LIMIT || abs(rightActualCmPS) > _SAFETY_SPEED_LIMIT)) {
+    if (safetyReady) {
+      shifter = 'P';
+      if (_SERIAL_CTRL && _SERIAL_INFO) {
+        Serial.print("[P] forced; exceed _SAFETY_SPEED_LIMIT:");
+        Serial.print(_SAFETY_SPEED_LIMIT);
+        Serial.print(";l");
+        Serial.print(leftActualCmPS);
+        Serial.print(";r");
+        Serial.print(rightActualCmPS);
+        Serial.println("cm/s;");
+      }
+    } else {
+      safetyReady = true;  
+    }
+  } else {
+    safetyReady = false;
+  }
+  debugPulse(debugPin1, 4);
 }
 
 /***
   * Calculates necessary acceleration to catch up with target speed
+  * @todo: need to be implemented
   */
 void calculateAutocruise() {
-  if (shifter == 'D') {
-    signed int lCps, rCps, lCpsDiff, rCpsDiff;
-    lCps = (leftClockwise < 0) ? -1 * int(leftCyclePerSec) : int(leftCyclePerSec); 
-    lCpsDiff = leftTargetSpeed - lCps;
-    if (abs(lCpsDiff) < _AUTOCRUISE_TARGET_TOLERANCE) {
-      leftAcceleration = 0; 
-    } else if (lCpsDiff > 0) {
-      if (leftAcceleration < _AUTOCRUISE_ACC) leftAcceleration += _AUTOCRUISE_ACC_STEPS;
-      else leftAcceleration = _AUTOCRUISE_ACC;
-      if (lCps > _AUTOCRUISE_START_ACC_SPEED && leftAcceleration > lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
-        leftAcceleration = lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+  debugPulse(debugPin1, 1);
+  static bool onMyWay = false;
+  if (shifter != 'D' || (leftTargetCmPS == 0 && rightTargetCmPS == 0)) {
+    onMyWay = false;
+    leftDrive = false;
+    leftForce = 0;
+    rightDrive = false;
+    rightForce = 0;
+  } else if (!onMyWay && (leftTargetCmPS == 0 || rightTargetCmPS == 0)) { // singe side mode
+    if (leftTargetCmPS != 0) {
+      leftDrive = true;
+      if (leftForce == 0) {
+        leftForce = 3 * leftTargetCmPS; // initial force
+      } else {
+        if (leftTargetCmPS > leftActualCmPS) {
+          leftForce += 10; // need to be fine tuned
+        } else if(leftTargetCmPS < leftActualCmPS) {
+          leftForce -= 10;
+        }
+      }
     } else {
-      if (leftAcceleration > -_AUTOCRUISE_ACC) leftAcceleration -= _AUTOCRUISE_ACC_STEPS;
-      else leftAcceleration = -_AUTOCRUISE_ACC;
-      if (lCps < -_AUTOCRUISE_START_ACC_SPEED && leftAcceleration < lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
-        leftAcceleration = lCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+      leftDrive = false;
+      leftForce = 0;
     }
-    rCps = (rightClockwise < 0) ? -1 * int(rightCyclePerSec) : int(rightCyclePerSec); 
-    rCpsDiff = rightTargetSpeed - rCps;
-    if (abs(rCpsDiff) < _AUTOCRUISE_TARGET_TOLERANCE) {
-      rightAcceleration = 0; 
-    } else if (rCpsDiff > 0) {
-      if (rightAcceleration < _AUTOCRUISE_ACC) rightAcceleration += _AUTOCRUISE_ACC_STEPS;
-      else rightAcceleration = _AUTOCRUISE_ACC;
-      if (rCps > _AUTOCRUISE_START_ACC_SPEED && rightAcceleration > rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
-        rightAcceleration = rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+    if (rightTargetCmPS != 0) {
+      rightDrive = true;
+      if (rightForce == 0) {
+        rightForce = 3 * rightTargetCmPS; // initial force
+      } else {
+        if (rightTargetCmPS > rightActualCmPS) {
+          rightForce += 10;
+        } else if(rightTargetCmPS < rightActualCmPS) {
+          rightForce -= 10;
+        }
+      }
     } else {
-      if (rightAcceleration > -_AUTOCRUISE_ACC) rightAcceleration -= _AUTOCRUISE_ACC_STEPS;
-      else rightAcceleration = -_AUTOCRUISE_ACC;
-      if (rCps < -_AUTOCRUISE_START_ACC_SPEED && rightAcceleration < rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR) 
-        rightAcceleration = rCpsDiff * _AUTOCRUISE_ACC_DIFF_MULTIPLICATOR;
+      rightDrive = false;
+      rightForce = 0;
     }
-  } else {
-    leftAcceleration = 0;
-    rightAcceleration = 0;
+  } else if (onMyWay || (leftTargetCmPS != 0 && rightTargetCmPS != 0)) {
+    onMyWay = true;
+    leftDrive = true;
+    rightDrive = true;
+    if (leftTargetCmPS != 0 && leftActualCmPS == 0 && leftForce == 0) {
+      leftForce = leftTargetCmPS; // initial force
+    } else if (leftTargetCmPS != 0 && abs(leftActualCmPS) <= 10) {
+      if (leftTargetCmPS > 0) {
+        leftForce += 10; // need to be fine tuned
+      } else {
+        leftForce -= 10;
+      }
+    } else {
+      leftForce = leftTargetCmPS - leftActualCmPS;
+    }
+    if (rightTargetCmPS != 0 && rightActualCmPS == 0 && rightForce == 0) {
+      rightForce = rightTargetCmPS; // initial force
+    } else if (rightTargetCmPS != 0 && abs(rightActualCmPS) <= 10) {
+      if (rightTargetCmPS > 0) {
+        rightForce += 10; // need to be fine tuned
+      } else {
+        rightForce -= 10;
+      }
+    } else {
+      rightForce = rightTargetCmPS - rightActualCmPS;
+    }
   }
+  if (leftForce > _MAX_GYRO_ACCELERATION) leftForce = _MAX_GYRO_ACCELERATION;
+  if (leftForce < -_MAX_GYRO_ACCELERATION) leftForce = -_MAX_GYRO_ACCELERATION;
+  if (rightForce > _MAX_GYRO_ACCELERATION) rightForce = _MAX_GYRO_ACCELERATION;
+  if (rightForce < -_MAX_GYRO_ACCELERATION) rightForce = -_MAX_GYRO_ACCELERATION;
+  debugPulse(debugPin1, 2);
 }
 
 /***
   * Increments changes on left hall effect sensor and detects direction.
   */
 void leftHallInc() {
-  debugPulse(debugPin1, 2);
   bool leftHallYellowState = digitalRead(leftHallYellowPin);
   if (!leftHallYellowState) {
-    debugPulse(debugPin1, 3);
-    if (leftCyclePerSec < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X hall changes/s
-      debugPulse(debugPin1, 4);
-      if (digitalRead(leftHallBluePin)) {
+    if (abs(leftActualCmPS) < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
+      if (!digitalRead(leftHallBluePin)) {
         if (leftClockwise == -1) leftDirectionChanged++;
         if (leftClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) leftClockwise++;
       } else {
@@ -249,12 +326,9 @@ void leftHallInc() {
   * Increments changes on right hall effect sensor and detects direction.
   */
 void rightHallInc() {
-  debugPulse(debugPin1, 2);
   bool rightHallYellowState = digitalRead(rightHallYellowPin);
   if (!rightHallYellowState) {
-    debugPulse(debugPin1, 3);
-    if (rightCyclePerSec < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X hall changes/s
-      debugPulse(debugPin1, 4);
+    if (abs(rightActualCmPS) < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
       if (!digitalRead(rightHallBluePin)) {
         if (rightClockwise == -1) rightDirectionChanged++;
         if (rightClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) rightClockwise++;
@@ -271,7 +345,6 @@ void rightHallInc() {
   * Handles interrupt.
   */
 void leftHallInterrupt() {
-  debugPulse(debugPin1, 1);
   leftHallInterrupted = micros() + _HALL_INTERRUP_GRACE_PERIOD;
 }
 
@@ -279,7 +352,6 @@ void leftHallInterrupt() {
   * Handles interrupt.
   */
 void rightHallInterrupt() {
-  debugPulse(debugPin1, 1);
   rightHallInterrupted = micros() + _HALL_INTERRUP_GRACE_PERIOD;
 }
 
@@ -289,56 +361,71 @@ void rightHallInterrupt() {
  */
 #if _SERIAL_CTRL
 inline void listenSerialControl() {
+  char ch;
+  static char c;
+  static String toParse = "";
   int parsedInt = 0;
-  if (Serial.available() > 0) {
-    command=Serial.read();
-    if (Serial.available() > 0) parsedInt = Serial.parseInt();
-    switch (command) {
-      case 'n':
-        directedby = Acceleration;
-        leftAcceleration=0;
-        rightAcceleration=0;
-        break;
-      case 'm':
-        directedby = Autocruise;
-        leftTargetSpeed=0;
-        rightTargetSpeed=0;
-        break;
-      case 'q':
-        directedby = Acceleration;
-        if (abs(parsedInt) <= _MAX_GYRO_ACCELERATION) leftAcceleration = parsedInt;
-        break;
-      case 'w':
-        directedby = Acceleration;
-        if (abs(parsedInt) <= _MAX_GYRO_ACCELERATION) rightAcceleration = parsedInt;
-        break;
-      case 'a':
-        directedby = Autocruise;
-        if (abs(parsedInt) <= _MAX_SPEED) leftTargetSpeed = parsedInt;
-        break;
-      case 's':
-        directedby = Autocruise;
-        if (abs(parsedInt) <= _MAX_SPEED) rightTargetSpeed = parsedInt;
-        break;
-      case 'i':
-        digitalWrite(inputSelector, LOW); // turned on
-        break;
-      case 'o':
-        digitalWrite(inputSelector, HIGH); //turned off
-        break;
-      case 'd':
-      case 'D':
-        shifter = 'D'; // drive
-        break;
-      case 'p':
-      case 'P':
-        shifter = 'P'; // park
-        break;
-      case 'l':
-        serialInfo();
-        break;
+  while (Serial.available() > 0) {
+    ch=Serial.read();
+    if (ch == ';') {
+      if (toParse.length() > 0) {
+        parsedInt = toParse.toInt();
+        toParse = "";
+      } else {
+        parsedInt = 0;
+      }
+      command = c;
+      switch (command) {
+        case 'n':
+          directedby = Acceleration;
+          leftForce=0;
+          rightForce=0;
+          break;
+        case 'm':
+          directedby = Autocruise;
+          leftTargetCmPS=0;
+          rightTargetCmPS=0;
+          break;
+        case 'q':
+          directedby = Acceleration;
+          if (abs(parsedInt) <= _MAX_GYRO_ACCELERATION) leftForce = parsedInt;
+          break;
+        case 'w':
+          directedby = Acceleration;
+          if (abs(parsedInt) <= _MAX_GYRO_ACCELERATION) rightForce = parsedInt;
+          break;
+        case 'a':
+          directedby = Autocruise;
+          if (abs(parsedInt) <= _MAX_SPEED) leftTargetCmPS = parsedInt;
+          break;
+        case 's':
+          directedby = Autocruise;
+          if (abs(parsedInt) <= _MAX_SPEED) rightTargetCmPS = parsedInt;
+          break;
+        case 'i':
+          digitalWrite(inputSelector, LOW); // turned on
+          break;
+        case 'o':
+          digitalWrite(inputSelector, HIGH); //turned off
+          break;
+        case 'd':
+        case 'D':
+          shifter = 'D'; // drive
+          break;
+        case 'p':
+        case 'P':
+          shifter = 'P'; // park
+          break;
+        case 'l':
+          serialInfo();
+          break;
+      }
+    } else if (isDigit(ch) || ch == '-') {
+      toParse += ch;
+    } else if (isAlpha(ch)) {
+      c = ch;
     }
-  }
+  }  
 }
 #else
 inline void listenSerialControl() {}
@@ -356,20 +443,18 @@ inline void serialInfo() {
   Serial.print(shifter);
   Serial.print(";");
   Serial.print(directedby);
-  Serial.print(";cps:");
-  if (leftClockwise < 0) Serial.print("-");
-  Serial.print(leftCyclePerSec);
+  Serial.print(";cm/s:");
+  Serial.print(leftActualCmPS);
   Serial.print(";");
-  if (rightClockwise < 0) Serial.print("-");
-  Serial.print(rightCyclePerSec);
-  Serial.print(";acc:");
-  Serial.print(leftAcceleration);
+  Serial.print(rightActualCmPS);
+  Serial.print(";F:");
+  Serial.print(leftForce);
   Serial.print(";");
-  Serial.print(rightAcceleration);  
+  Serial.print(rightForce);
   Serial.print(";ts:");
-  Serial.print(leftTargetSpeed);
+  Serial.print(leftTargetCmPS);
   Serial.print(";");
-  Serial.print(rightTargetSpeed);
+  Serial.print(rightTargetCmPS);
   Serial.print(";dc:");
   Serial.print(leftDirectionChanged);
   Serial.print(";");
@@ -401,9 +486,9 @@ inline void serialInit() {
     Serial.println("\tm\t Reset target speed");
     Serial.println("\ta\t Set left target speed min: -80, max: 80");
     Serial.println("\ts\t Set right target speed min: -80, max: 80");
-    Serial.print("\n1) Last Command; 2) Hijack; 3) Shifter; 4) Driected by; 5) Left Cycle Per Sec; ");
-    Serial.print("6) Left Cycle Per Sec; 7) Right Cycle Per Sec; 8) Left Acceleration;");
-    Serial.println("9) Right Acceleration; 10) Left target speed; 11) Right target speed;");
+    Serial.print("\n1) Last Command; 2) Hijack; 3) Shifter; 4) Directed by; ");
+    Serial.print("5) Left cm/s; 6) R. cm/s; 7) Left Force; ");
+    Serial.println("8) R. F.; 9) Left target cm/s; 10) R. t. cm/s;");
   }
 }
 #else
@@ -436,8 +521,8 @@ inline void i2cReceiveEvent(int howMany) {
         break;
       case B00001000: // zero acceleration
         directedby = Acceleration;
-        leftAcceleration=0;
-        rightAcceleration=0;
+        leftForce=0;
+        rightForce=0;
         break;
       case B00001010: // left acceleration
         if (howMany >= 3) {
@@ -445,7 +530,7 @@ inline void i2cReceiveEvent(int howMany) {
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
-          leftAcceleration = si;
+          leftForce = si;
         }
         break;
       case B00001110: // right acceleration
@@ -454,7 +539,7 @@ inline void i2cReceiveEvent(int howMany) {
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
-          rightAcceleration = si;
+          rightForce = si;
         }
         break;
       case B00010000: // left and right acceleration
@@ -463,11 +548,11 @@ inline void i2cReceiveEvent(int howMany) {
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
-          leftAcceleration = si;
+          leftForce = si;
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
-          rightAcceleration = si;
+          rightForce = si;
         }
         break;
       case B00011000: // left target speed
@@ -476,7 +561,7 @@ inline void i2cReceiveEvent(int howMany) {
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
-          leftTargetSpeed = si;
+          leftTargetCmPS = si;
         }
         break;
       case B00011010: // right target speed
@@ -485,7 +570,7 @@ inline void i2cReceiveEvent(int howMany) {
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
-          rightTargetSpeed = si;
+          rightTargetCmPS = si;
         }
         break;
       case B00011100: // left and right target speed
@@ -494,11 +579,11 @@ inline void i2cReceiveEvent(int howMany) {
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
-          leftTargetSpeed = si;
+          leftTargetCmPS = si;
           si = Wire.read();  // receive high byte (overwrites previous reading)
           si = si << 8;    // shift high byte to be high 8 bits
           si |= Wire.read(); // receive low byte as lower 8 bits
-          rightTargetSpeed = si;
+          rightTargetCmPS = si;
         }
         break;
     }
@@ -532,57 +617,57 @@ inline void i2cRequestEvent() {
       break;
     case B00001001: // zero acceleration
     case B00010001: // left and right acceleration
-      buffer[1] = byte((leftAcceleration >> 8) & 0x00FF);
-      buffer[2] = byte(leftAcceleration & 0x00FF);
-      buffer[3] = byte((rightAcceleration >> 8) & 0x00FF);
-      buffer[4] = byte(rightAcceleration & 0x00FF);
+      buffer[1] = byte((leftForce >> 8) & 0x00FF);
+      buffer[2] = byte(leftForce & 0x00FF);
+      buffer[3] = byte((rightForce >> 8) & 0x00FF);
+      buffer[4] = byte(rightForce & 0x00FF);
       Wire.write(buffer, 5);
       break;
     case B00001011: // left acceleration
-      buffer[1] = byte((leftAcceleration >> 8) & 0x00FF);
-      buffer[2] = byte(leftAcceleration & 0x00FF);
+      buffer[1] = byte((leftForce >> 8) & 0x00FF);
+      buffer[2] = byte(leftForce & 0x00FF);
       Wire.write(buffer, 3);
       break;
     case B00001111: // right acceleration
-      buffer[1] = byte((rightAcceleration >> 8) & 0x00FF);
-      buffer[2] = byte(rightAcceleration & 0x00FF);
+      buffer[1] = byte((rightForce >> 8) & 0x00FF);
+      buffer[2] = byte(rightForce & 0x00FF);
       Wire.write(buffer, 3);
       break;
     case B00010011: // left speed
-      si = (leftClockwise < 0) ? -1 * leftCyclePerSec : leftCyclePerSec;
+      si = (leftClockwise < 0) ? -1 * leftActualCmPS : leftActualCmPS;
       buffer[1] = byte((si >> 8) & 0x00FF);
       buffer[2] = byte(si & 0x00FF);
       Wire.write(buffer, 3);
       break;
     case B00010101: // right speed
-      si = (rightClockwise < 0) ? -1 * rightCyclePerSec : rightCyclePerSec;
+      si = (rightClockwise < 0) ? -1 * rightActualCmPS : rightActualCmPS;
       buffer[1] = byte((si >> 8) & 0x00FF);
       buffer[2] = byte(si & 0x00FF);
       Wire.write(buffer, 3);
       break;
     case B00010111: // left and right speed
-      si = (leftClockwise < 0) ? -1 * leftCyclePerSec : leftCyclePerSec;
+      si = (leftClockwise < 0) ? -1 * leftActualCmPS : leftActualCmPS;
       buffer[1] = byte((si >> 8) & 0x00FF);
       buffer[2] = byte(si & 0x00FF);
-      si = (rightClockwise < 0) ? -1 * rightCyclePerSec : rightCyclePerSec;
+      si = (rightClockwise < 0) ? -1 * rightActualCmPS : rightActualCmPS;
       buffer[3] = byte((si >> 8) & 0x00FF);
       buffer[4] = byte(si & 0x00FF);
       Wire.write(buffer, 5);
     case B00011001: // left target speed
-      buffer[1] = byte((leftTargetSpeed >> 8) & 0x00FF);
-      buffer[2] = byte(leftTargetSpeed & 0x00FF);
+      buffer[1] = byte((leftTargetCmPS >> 8) & 0x00FF);
+      buffer[2] = byte(leftTargetCmPS & 0x00FF);
       Wire.write(buffer, 3);
       break;
     case B00011011: // right target speed
-      buffer[1] = byte((rightTargetSpeed >> 8) & 0x00FF);
-      buffer[2] = byte(rightTargetSpeed & 0x00FF);
+      buffer[1] = byte((rightTargetCmPS >> 8) & 0x00FF);
+      buffer[2] = byte(rightTargetCmPS & 0x00FF);
       Wire.write(buffer, 3);
       break;
     case B00011101: // left and right target speed
-      buffer[1] = byte((leftTargetSpeed >> 8) & 0x00FF);
-      buffer[2] = byte(leftTargetSpeed & 0x00FF);
-      buffer[3] = byte((rightTargetSpeed >> 8) & 0x00FF);
-      buffer[4] = byte(rightTargetSpeed & 0x00FF);
+      buffer[1] = byte((leftTargetCmPS >> 8) & 0x00FF);
+      buffer[2] = byte(leftTargetCmPS & 0x00FF);
+      buffer[3] = byte((rightTargetCmPS >> 8) & 0x00FF);
+      buffer[4] = byte(rightTargetCmPS & 0x00FF);
       Wire.write(buffer, 5);
       break;
   }
@@ -669,48 +754,18 @@ void loop() {
     return;
   }
 
-  if (currentMicros - pmCalculateIncInPeriod >= 250000
-      && microsTillNextTx > 100) { //it takes ~100us on 16MHz
+  if (currentMicros - pmCalculateIncInPeriod >= 175000
+      && microsTillNextTx > 25) { //it takes ~25us on 16MHz
     pmCalculateIncInPeriod = currentMicros;
     calculateIncInPeriod();
     return;
   }
 
-  if (directedby == Autocruise && currentMicros - pmAutocruise >= 250000
-      && microsTillNextTx > 100) { // it takes ~20us on 16MHz
+  if (directedby == Autocruise && currentMicros - pmAutocruise >= 175000
+      && microsTillNextTx > 25) { // it takes ~20us on 16MHz
     pmAutocruise = currentMicros;
     calculateAutocruise();
     return;
-  }
-
-  if (shifter == 'D' && (leftCyclePerSec > _MAX_SPEED || rightCyclePerSec > _MAX_SPEED)) {
-    shifter = 'P';    
-    if (_SERIAL_CTRL && _SERIAL_INFO) {
-      Serial.print("[P] forced; exceed _MAX_SPEED:");
-      Serial.print(_MAX_SPEED);
-      Serial.print(";lCps");
-      Serial.print(leftCyclePerSec);
-      Serial.print(";rCps");
-      Serial.print(rightCyclePerSec);
-      Serial.println(";");
-    }
-  }
-
-  if (shifter == 'D' && (leftCyclePerSec + rightCyclePerSec) > 40 && (leftClockwise*rightClockwise) > 0) {
-    shifter = 'P';    
-    if (_SERIAL_CTRL && _SERIAL_INFO) {
-      Serial.print("[P] forced; direction detection error:");
-      Serial.print(leftClockwise*rightClockwise);
-      Serial.print(";lCw");
-      Serial.print(leftClockwise);
-      Serial.print(";rCcw");
-      Serial.print(rightClockwise);
-      Serial.print(";lCps");
-      Serial.print(leftCyclePerSec);
-      Serial.print(";rCps");
-      Serial.print(rightCyclePerSec);
-      Serial.println(";");
-    }
   }
 
   if (_SERIAL_CTRL) {
