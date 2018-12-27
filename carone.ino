@@ -1,7 +1,7 @@
 #include <SoftSerialParallelWrite.h> // SoftSerialParallelWrite library for parallel UART transmission.
 
 // A4 and A5 can be used for debug purpose only if not used for I2C. The debug signal can be read by digital analyzer or oscilloscope.
-#define _DEBUG 1
+#define _DEBUG 0
 
 // Baud-rate, frame size and timing for UART communication between gyro-daughterboard and motherboard .
 #define _GYRO_SERIAL 26275 //Baud-rate.
@@ -18,7 +18,7 @@
 #define _SERIAL_INFO 1 // Serial var dump is time expensive. Not recommended in production.
 
 // Optional I2C settings. NOTICE: it uses the same pins - A4, A5 like signal debug .
-#define _I2C_CTRL 0 // 1 means enabled or 0 means disabled.
+#define _I2C_CTRL 1 // 1 means enabled or 0 means disabled.
 #define _I2C_BUS_ADDRESS 8
 
 #if _I2C_CTRL
@@ -34,15 +34,16 @@ the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 //
 // Default directing mode
 #define _DEFAULT_DIRECTION 0 // 0:acceleration, 1:target speed.
-// Measured output from gyro board at ~30 degree horizontal angle.
-#define _MAX_GYRO_ACCELERATION 2900
+// Measured output from gyro board at ~30 degree horizontal angle is 2900.
+#define _MAX_GYRO_ACCELERATION 240
 // Maximum allowed speed before the safety parking mode activated.
 // The hover board tend to loose control above that speed.
 #define _MAX_SPEED 142 // Max controllable speed in cm/s. More about units in README.md
+#define _SAFETY_SPEED_LIMIT 180 // Force parking mode above that speed. 
 #define _AUTOCRUISE_SINGLE_START_FORCE_MPL 3 // Initial force would be X times of target speed. With 0 initial force the acceleration is sluggish. Single mode means only one wheel is working and the acceleration force related to speed is linear.
-#define _AUTOCRUISE_SINGLE_FORCE_INC 10 // Force adjusting increments or decrements.
+#define _AUTOCRUISE_SINGLE_FORCE_INC 5 // Force adjusting increments or decrements.
 #define _AUTOCRUISE_DUAL_START_FORCE_MPL 1 // Initial force would be X times of target speed. Dual mode means both wheels are working and the acceleration happens exponentially, therefor need to converge to zero. Zero force means keep velocity.
-#define _AUTOCRUISE_DUAL_FORCE_INC 10 // Force adjusting increments or decrements. Only used for acceleration from 0 speed.
+#define _AUTOCRUISE_DUAL_FORCE_INC 5 // Force adjusting increments or decrements. Only used for acceleration from 0 speed.
 // Settings for hall sensor of the wheel.
 #define _HALL_DIRECTION_DETECT_LIMIT 120 // Detects direction (cw,ccw) under this wheel RPM limit.
 // Although ccw status logically is a boolean, we need to avoid hall check errors. The implemented software solution is to incrementally enforcing the status on each sampling. This method absorbs occasional sampling errors.
@@ -185,10 +186,11 @@ void writeCurrentSpeed() {
   *            as we make an average 20 = 10 + 10
   */
 void calculateIncInPeriod() {
-  // debugPulse(debugPin1, 1);
+  debugPulse(debugPin1, 3);
   static unsigned int chpsL1 = 0, chpsL2 = 0;
   static unsigned int chpsR1 = 0, chpsR2 = 0;
   static bool chooseOne = false;
+  static bool safetyReady = false;
   if (chooseOne) {
     chpsL1 = (leftClockwise < 0 ? -10 : 10) * leftIncrements;
     chpsR1 =  (rightClockwise < 0 ? -10 : 10) * rightIncrements;
@@ -202,7 +204,25 @@ void calculateIncInPeriod() {
   rightActualCmPS = chpsR1 + chpsR2;
   leftIncrements = 0;
   rightIncrements = 0;
-  // debugPulse(debugPin1, 2);
+  if (shifter == 'D' && (abs(leftActualCmPS) > _SAFETY_SPEED_LIMIT || abs(rightActualCmPS) > _SAFETY_SPEED_LIMIT)) {
+    if (safetyReady) {
+      shifter = 'P';
+      if (_SERIAL_CTRL && _SERIAL_INFO) {
+        Serial.print("[P] forced; exceed _SAFETY_SPEED_LIMIT:");
+        Serial.print(_SAFETY_SPEED_LIMIT);
+        Serial.print(";l");
+        Serial.print(leftActualCmPS);
+        Serial.print(";r");
+        Serial.print(rightActualCmPS);
+        Serial.println("cm/s;");
+      }
+    } else {
+      safetyReady = true;  
+    }
+  } else {
+    safetyReady = false;
+  }
+  debugPulse(debugPin1, 4);
 }
 
 /***
@@ -210,79 +230,77 @@ void calculateIncInPeriod() {
   * @todo: need to be implemented
   */
 void calculateAutocruise() {
+  debugPulse(debugPin1, 1);
   static bool onMyWay = false;
-  if (shifter == 'D') {
-    if (leftTargetCmPS == 0 && rightTargetCmPS == 0) {
-      onMyWay = false;
-      leftDrive = false;
-      leftForce = 0;
-      rightDrive = false;
-      rightForce = 0;
-    } else if (!onMyWay && (leftTargetCmPS == 0 || rightTargetCmPS == 0)) { // singe side mode
-      if (leftTargetCmPS != 0) {
-        leftDrive = true;
-        if (leftForce == 0) {
-          leftForce = 3 * leftTargetCmPS; // initial force
-        } else {
-          if (leftTargetCmPS > leftActualCmPS) {
-            leftForce += 10; // need to be fine tuned
-          } else {
-            leftForce -= 10;
-          }
-        }
-      } else {
-        leftDrive = false;
-        leftForce = 0;
-      }
-      if (rightTargetCmPS != 0) {
-        rightDrive = true;
-        if (rightForce == 0) {
-          rightForce = 3 * rightTargetCmPS; // initial force
-        } else {
-          if (rightTargetCmPS > rightActualCmPS) {
-            rightForce += 10;
-          } else {
-            rightForce -= 10;
-          }
-        }
-      } else {
-        rightDrive = false;
-        rightForce = 0;
-      }
-    } else if (onMyWay || (leftTargetCmPS != 0 && rightTargetCmPS != 0)) {
-      onMyWay = true;
-      leftDrive = false;
-      rightDrive = false;
-      if (leftTargetCmPS != 0 && leftActualCmPS == 0 && leftForce == 0) {
-        leftForce = leftTargetCmPS; // initial force
-      } else if (leftTargetCmPS != 0 && leftActualCmPS == 0) {
-        if (leftTargetCmPS > 0) {
-          leftForce += 10; // need to be fine tuned
-        } else {
-          leftForce -= 10;
-        }
-      } else {
-        leftForce = leftTargetCmPS - leftActualCmPS;
-      }
-      if (rightTargetCmPS != 0 && rightActualCmPS == 0 && rightForce == 0) {
-        rightForce = rightTargetCmPS; // initial force
-      } else if (rightTargetCmPS != 0 && rightActualCmPS == 0) {
-        if (rightTargetCmPS > 0) {
-          rightForce += 10; // need to be fine tuned
-        } else {
-          rightForce -= 10;
-        }
-      } else {
-        rightForce = rightTargetCmPS - rightActualCmPS;
-      }
-    }
-  } else {
+  if (shifter != 'D' || (leftTargetCmPS == 0 && rightTargetCmPS == 0)) {
     onMyWay = false;
     leftDrive = false;
     leftForce = 0;
     rightDrive = false;
     rightForce = 0;
+  } else if (!onMyWay && (leftTargetCmPS == 0 || rightTargetCmPS == 0)) { // singe side mode
+    if (leftTargetCmPS != 0) {
+      leftDrive = true;
+      if (leftForce == 0) {
+        leftForce = 3 * leftTargetCmPS; // initial force
+      } else {
+        if (leftTargetCmPS > leftActualCmPS) {
+          leftForce += 10; // need to be fine tuned
+        } else if(leftTargetCmPS < leftActualCmPS) {
+          leftForce -= 10;
+        }
+      }
+    } else {
+      leftDrive = false;
+      leftForce = 0;
+    }
+    if (rightTargetCmPS != 0) {
+      rightDrive = true;
+      if (rightForce == 0) {
+        rightForce = 3 * rightTargetCmPS; // initial force
+      } else {
+        if (rightTargetCmPS > rightActualCmPS) {
+          rightForce += 10;
+        } else if(rightTargetCmPS < rightActualCmPS) {
+          rightForce -= 10;
+        }
+      }
+    } else {
+      rightDrive = false;
+      rightForce = 0;
+    }
+  } else if (onMyWay || (leftTargetCmPS != 0 && rightTargetCmPS != 0)) {
+    onMyWay = true;
+    leftDrive = true;
+    rightDrive = true;
+    if (leftTargetCmPS != 0 && leftActualCmPS == 0 && leftForce == 0) {
+      leftForce = leftTargetCmPS; // initial force
+    } else if (leftTargetCmPS != 0 && abs(leftActualCmPS) <= 10) {
+      if (leftTargetCmPS > 0) {
+        leftForce += 10; // need to be fine tuned
+      } else {
+        leftForce -= 10;
+      }
+    } else {
+      leftForce = leftTargetCmPS - leftActualCmPS;
+    }
+    if (rightTargetCmPS != 0 && rightActualCmPS == 0 && rightForce == 0) {
+      rightForce = rightTargetCmPS; // initial force
+    } else if (rightTargetCmPS != 0 && abs(rightActualCmPS) <= 10) {
+      if (rightTargetCmPS > 0) {
+        rightForce += 10; // need to be fine tuned
+      } else {
+        rightForce -= 10;
+      }
+    } else {
+      rightForce = rightTargetCmPS - rightActualCmPS;
+    }
   }
+  if (leftForce > _MAX_GYRO_ACCELERATION) leftForce = _MAX_GYRO_ACCELERATION;
+  if (leftForce < -_MAX_GYRO_ACCELERATION) leftForce = -_MAX_GYRO_ACCELERATION;
+  if (rightForce > _MAX_GYRO_ACCELERATION) rightForce = _MAX_GYRO_ACCELERATION;
+  if (rightForce < -_MAX_GYRO_ACCELERATION) rightForce = -_MAX_GYRO_ACCELERATION;
+  debugPulse(debugPin1, 2);
 }
 
 /***
@@ -743,24 +761,11 @@ void loop() {
     return;
   }
 
-  if (directedby == Autocruise && currentMicros - pmAutocruise >= 250000
-      && microsTillNextTx > 100) { // it takes ~20us on 16MHz
+  if (directedby == Autocruise && currentMicros - pmAutocruise >= 175000
+      && microsTillNextTx > 25) { // it takes ~20us on 16MHz
     pmAutocruise = currentMicros;
     calculateAutocruise();
     return;
-  }
-
-  if (shifter == 'D' && (abs(leftActualCmPS) > _MAX_SPEED || abs(rightActualCmPS) > _MAX_SPEED)) {
-    shifter = 'P';
-    if (_SERIAL_CTRL && _SERIAL_INFO) {
-      Serial.print("[P] forced; exceed _MAX_SPEED:");
-      Serial.print(_MAX_SPEED);
-      Serial.print(";l");
-      Serial.print(leftActualCmPS);
-      Serial.print(";r");
-      Serial.print(rightActualCmPS);
-      Serial.println("cm/s;");
-    }
   }
 
   if (_SERIAL_CTRL) {
