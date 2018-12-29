@@ -1,10 +1,9 @@
 #include <Wire.h>
 
 #define _I2C_BUS_ADDRESS 8
-#define _MAX_FW_SPEED 20
-#define _MAX_BW_SPEED 15
-#define _MAX_IDDLE_TIME 0 // after x millis will go to park mode
-#define _MAX_BREAK_GREACE 500 // for x millis stays break mode
+#define _MAX_CRUISING_SPEED 60
+#define _MAX_MANEUVERING_SPEED 30
+#define _MAX_IDDLE_TIME 250 // after x millis will go to park mode
 
 signed int leftCyclePerSec   = 0; //hall effect cycles. 
 signed int rightCyclePerSec  = 0; //hall effect cycles. 
@@ -109,20 +108,13 @@ void txSpeed() {
 void buttonCheck() {
   static unsigned long tsParkMode = 0;
   static unsigned long tsGraceBrake = 0;
+  static bool onMyWay = false;
   byte sw = !digitalRead(L1Pin) << 3 | !digitalRead(L2Pin) << 2 | !digitalRead(R2Pin) << 1 | !digitalRead(R1Pin);
   if (tsGraceBrake < millis()) {
     switch (sw) {
-      case B0000:
-        leftTargetSpeed = 0;
-        rightTargetSpeed = 0;
-        if (drive && tsParkMode < millis()) {
-          drive = false;
-          driveChanged = true;
-        }
-        break;
       case B0001: // right only go forward
         leftTargetSpeed = 0;
-        rightTargetSpeed = _MAX_FW_SPEED;
+        rightTargetSpeed = _MAX_MANEUVERING_SPEED;
         tsParkMode = millis() + _MAX_IDDLE_TIME;
         if (!drive) {
           drive = true;
@@ -131,7 +123,7 @@ void buttonCheck() {
         break;
       case B0010: // right only go backward
         leftTargetSpeed = 0;
-        rightTargetSpeed = -_MAX_BW_SPEED;
+        rightTargetSpeed = -_MAX_MANEUVERING_SPEED;
         tsParkMode = millis() + _MAX_IDDLE_TIME;
         if (!drive) {
           drive = true;
@@ -139,7 +131,7 @@ void buttonCheck() {
         }
         break;
       case B0100: // left only goes backward
-        leftTargetSpeed = _MAX_BW_SPEED;
+        leftTargetSpeed = - _MAX_MANEUVERING_SPEED;
         rightTargetSpeed = 0;
         tsParkMode = millis() + _MAX_IDDLE_TIME;
         if (!drive) {
@@ -148,8 +140,8 @@ void buttonCheck() {
         }
         break;
       case B0101: // left goes backward, right goes forward
-        leftTargetSpeed = _MAX_BW_SPEED;
-        rightTargetSpeed = _MAX_FW_SPEED;
+        leftTargetSpeed = 0;
+        rightTargetSpeed = _MAX_MANEUVERING_SPEED;
         tsParkMode = millis() + _MAX_IDDLE_TIME;
         if (!drive) {
           drive = true;
@@ -157,26 +149,28 @@ void buttonCheck() {
         }
         break;
       case B0110: // left and right go backward
-        leftTargetSpeed = _MAX_BW_SPEED;
-        rightTargetSpeed = -_MAX_BW_SPEED;
+        leftTargetSpeed = -_MAX_MANEUVERING_SPEED;
+        rightTargetSpeed = -_MAX_MANEUVERING_SPEED;
         tsParkMode = millis() + _MAX_IDDLE_TIME;
         if (!drive) {
           drive = true;
           driveChanged = true;
         }
+        onMyWay = true;
         break;
       case B1001: // left and right go forward
-        leftTargetSpeed = -_MAX_FW_SPEED;
-        rightTargetSpeed = _MAX_FW_SPEED;
+        leftTargetSpeed = _MAX_CRUISING_SPEED;
+        rightTargetSpeed = _MAX_CRUISING_SPEED;
         tsParkMode = millis() + _MAX_IDDLE_TIME;
         if (!drive) {
           drive = true;
           driveChanged = true;
         }
+        onMyWay = true;
         break;
       case B1010: // left goes forward, right goes backward
-        leftTargetSpeed = -_MAX_FW_SPEED;
-        rightTargetSpeed = -_MAX_BW_SPEED;
+        leftTargetSpeed = _MAX_MANEUVERING_SPEED;
+        rightTargetSpeed = 0;
         tsParkMode = millis() + _MAX_IDDLE_TIME;
         if (!drive) {
           drive = true;
@@ -184,7 +178,7 @@ void buttonCheck() {
         }
         break;
       case B1000: // left only goes forward
-        leftTargetSpeed = -_MAX_FW_SPEED;
+        leftTargetSpeed = _MAX_MANEUVERING_SPEED;
         rightTargetSpeed = 0;
         tsParkMode = millis() + _MAX_IDDLE_TIME;
         if (!drive) {
@@ -192,14 +186,32 @@ void buttonCheck() {
           driveChanged = true;
         }
         break;
+      case B0000:
       default:
-        rightTargetSpeed = 0;
         leftTargetSpeed = 0;
-        if (drive) {
-          drive = false;
-          driveChanged = true;
+        rightTargetSpeed = 0;
+        if (drive && tsParkMode < millis()) {
+          if (onMyWay) {
+            // my board has a bug, after a ride, singe side acceleration on the left wheel becomes fast forward an any direction
+            // the fix is to put the right wheel on a single side mode with a small acceleration
+            i2cWrite(B100, 0); // let's put to parking mode
+            delay(20); // wait 20 millis to consume
+            i2cWrite(B110, 0); // let's put back to drive mode
+            rightTargetSpeed = 1; // set insignificant speed
+            txSpeed(); // let's transfer the acceleration
+            delay(20); // wait 20 millis to consume
+            i2cWrite(B100, 0); // let's put to parking mode
+            delay(20); // wait 20 millis to consume
+            i2cWrite(B110, 0); // let's put back to drive mode
+            rightTargetSpeed = -1; // set insignificant speed, and let it become 0 in the next cycle
+            txSpeed(); // let's transfer acceleration
+            delay(20); // wait 20 millis to consume
+            onMyWay = false;
+          } else {
+            drive = false;
+            driveChanged = true;
+          }
         }
-        tsGraceBrake = millis() + _MAX_BREAK_GREACE;
     }
   }
 }
