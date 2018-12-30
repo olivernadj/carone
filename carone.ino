@@ -1,7 +1,8 @@
 #include <SoftSerialParallelWrite.h> // SoftSerialParallelWrite library for parallel UART transmission.
+#include <Wire.h> // I2C Wire library.
 
 // A4 and A5 can be used for debug purpose only if not used for I2C. The debug signal can be read by digital analyzer or oscilloscope.
-#define _DEBUG 0
+#define _DEBUG 1
 
 // Baud-rate, frame size and timing for UART communication between gyro-daughterboard and motherboard .
 #define _GYRO_SERIAL 26275 //Baud-rate.
@@ -13,17 +14,14 @@
 //   Long 875 us cycles (time between 2 start bit) happen 10/1 times.
 
 // Optional Arduino serial for debugging and controlling.
-#define _SERIAL_CTRL 9600 // bandwidth or 0 means disabled.
+#define _SERIAL_CTRL 19200 // bandwidth or 0 means disabled.
 #define _SERIAL_TIMEOUT 5 // Time limits for reading serial inputs in millis. Unfortunately sometimes 5 millis not enough, but with longer time limit there would be not enough time between UART frames.
 #define _SERIAL_INFO 1 // Serial var dump is time expensive. Not recommended in production.
 
 // Optional I2C settings. NOTICE: it uses the same pins - A4, A5 like signal debug .
-#define _I2C_CTRL 1 // 1 means enabled or 0 means disabled.
+#define _I2C_CTRL 0//1 // 1 means enabled or 0 means disabled.
 #define _I2C_BUS_ADDRESS 8
 
-#if _I2C_CTRL
-#include <Wire.h> // I2C Wire library.
-#endif
 #if _DEBUG && _I2C_CTRL // Throw compile error if both pin debug and I2C enabled.
 the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 #endif
@@ -63,18 +61,17 @@ const int leftHallBluePin      =  4; // Same as above, but for the right wheel.
 const int rightHallYellowPin   =  3; // Hall effect triggering, as interrupt.
 const int leftHallYellowPin    =  2; // Same as above, but for the right wheel
 
-signed int leftIncrements   = 0; // Hall effect changes since last calculation
-signed int rightIncrements  = 0; // Same as above, but for the right wheel
-signed int leftActualCmPS   = 0; // Measured Absolute wheel speed in cm/s. More about units in README.md
-signed int rightActualCmPS  = 0; // Same as above, but for the right wheel
-signed int leftActualAcc    = 0; // Measured wheel acceleration.
-signed int rightActualAcc   = 0; // Same as above, but for the right wheel
-signed int leftForce        = 0; // Accelerating force. A wired unit what gyro extension board sends to motherboard based on its horizontal angle.
-signed int rightForce       = 0; // Same as above, but for the right side
-signed int leftTargetCmPS   = 0; // Target speed (wheel RMP) in auto-cruise direction mode
-signed int rightTargetCmPS  = 0; // Same as above, but for the right wheel
-signed int leftClockwise    = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
-signed int rightClockwise   = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
+
+signed long leftLastRealInterrupt  = 0; // when did the last hall interrupt happened.
+signed long rightLastRealInterrupt = 0; // Same as above, but for the right wheel.
+signed int leftActualCmPS          = 0; // Measured Absolute wheel speed in cm/s. More about units in README.md
+signed int rightActualCmPS         = 0; // Same as above, but for the right wheel
+signed int leftForce               = 0; // Accelerating force. A wired unit what gyro extension board sends to motherboard based on its horizontal angle.
+signed int rightForce              = 0; // Same as above, but for the right side
+signed int leftTargetCmPS          = 0; // Target speed (wheel RMP) in auto-cruise direction mode
+signed int rightTargetCmPS         = 0; // Same as above, but for the right wheel
+signed int leftClockwise           = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
+signed int rightClockwise          = 0; // Example: ccw: -3, -2, -1; cw: 0, 1, 2
 
 char command = 'n'; //last received input by serial. n is no acceleration
 char shifter = 'P'; // [P]ark or [D]rive
@@ -87,10 +84,6 @@ volatile byte i2cReg = 0xFF; // Storage for I2C internal register address.
 
 volatile unsigned long leftHallInterrupted  = 0; //0 means no interruption, otherwise interruption happened at a micro time stamp + _HALL_INTERRUP_GRACE_PERIOD
 volatile unsigned long rightHallInterrupted = 0; //Same as above, but for the right wheel.
-
-signed int leftDirectionChanged  = 0; // For debugging purpose. It count the direction changes and dumps to serialInfo()
-signed int rightDirectionChanged = 0; // Same as above
-
 
 /***
  * Debugging
@@ -178,66 +171,13 @@ void writeCurrentSpeed() {
 }
 
 /***
-  * Calculates averages of last 2 samples of the hall effect cycles
-  * and sets to leftActualCmPS and rightActualCmPS
-  * INPORTANT: It must be called in every 178 millis
-  *            Initially: 3560 / timeElipsed
-  *            if timeElipsed = 356/2 => 3560/178 = 20
-  *            as we make an average 20 = 10 + 10
-  */
-void calculateIncInPeriod() {
-  debugPulse(debugPin1, 3);
-  static unsigned int chpsL1 = 0, chpsL2 = 0;
-  static unsigned int chpsR1 = 0, chpsR2 = 0;
-  static bool chooseOne = false;
-  static bool safetyReady = false;
-  if (chooseOne) {
-    chpsL1 = (leftClockwise < 0 ? -10 : 10) * leftIncrements;
-    chpsR1 =  (rightClockwise < 0 ? -10 : 10) * rightIncrements;
-    chooseOne = false;
-  } else {
-    chpsL2 = (leftClockwise < 0 ? -10 : 10) * leftIncrements;
-    chpsR2 =  (rightClockwise < 0 ? -10 : 10) * rightIncrements;
-    chooseOne = true;
-  }
-  leftActualCmPS = chpsL1 + chpsL2;
-  rightActualCmPS = chpsR1 + chpsR2;
-  leftIncrements = 0;
-  rightIncrements = 0;
-  if (shifter == 'D' && (abs(leftActualCmPS) > _SAFETY_SPEED_LIMIT || abs(rightActualCmPS) > _SAFETY_SPEED_LIMIT)) {
-    if (safetyReady) { // apply safety break only for 2 consecutive speed violation
-      shifter = 'P';
-      if (_SERIAL_CTRL && _SERIAL_INFO) {
-        Serial.print("[P] forced; exceed _SAFETY_SPEED_LIMIT:");
-        Serial.print(_SAFETY_SPEED_LIMIT);
-        Serial.print(";l");
-        Serial.print(leftActualCmPS);
-        Serial.print(";r");
-        Serial.print(rightActualCmPS);
-        Serial.println("cm/s;");
-      }
-    } else {
-      safetyReady = true;  // 1st violation gracefully ignored
-    }
-  } else {
-    safetyReady = false;
-  }
-  if (leftActualCmPS == 0) {
-    // in the last 2 periods were no movement so let's reset the direction counts
-    leftClockwise = 0; 
-  }
-  if (rightActualCmPS == 0) {
-    rightClockwise = 0; 
-  }
-  debugPulse(debugPin1, 4);
-}
-
-/***
   * Calculates necessary acceleration to catch up with target speed
   * @todo: need to be implemented
   */
 void calculateAutocruise() {
   debugPulse(debugPin1, 1);
+  signed int leftRecentCmPS  = 0;
+  signed int rightRecentCmPS = 0;
   static bool onMyWay = false;
   if (shifter != 'D') {
     leftForce = 0;
@@ -293,7 +233,7 @@ void calculateAutocruise() {
     rightDrive = true;
     if (leftTargetCmPS != 0 && leftActualCmPS == 0 && leftForce == 0) {
       leftForce = (leftTargetCmPS < 0 ? -_AUTOCRUISE_DUAL_START_FORCE : _AUTOCRUISE_DUAL_START_FORCE); // initial force
-    } else if (leftTargetCmPS != 0 && abs(leftActualCmPS) <= 10) {
+    } else if (leftTargetCmPS != 0 && abs(leftActualCmPS) <= 5) {
       if (leftTargetCmPS > 0) {
         leftForce += _AUTOCRUISE_DUAL_FORCE_INC; // need to be fine tuned
       } else {
@@ -304,7 +244,7 @@ void calculateAutocruise() {
     }
     if (rightTargetCmPS != 0 && rightActualCmPS == 0 && rightForce == 0) {
       rightForce = (rightTargetCmPS < 0 ? -_AUTOCRUISE_DUAL_START_FORCE : _AUTOCRUISE_DUAL_START_FORCE); // initial force
-    } else if (rightTargetCmPS != 0 && abs(rightActualCmPS) <= 10) {
+    } else if (rightTargetCmPS != 0 && abs(rightActualCmPS) <= 5) {
       if (rightTargetCmPS > 0) {
         rightForce += _AUTOCRUISE_DUAL_FORCE_INC; // need to be fine tuned
       } else {
@@ -329,45 +269,103 @@ void calculateAutocruise() {
   if (leftForce < -_MAX_GYRO_ACCELERATION) leftForce = -_MAX_GYRO_ACCELERATION;
   if (rightForce > _MAX_GYRO_ACCELERATION) rightForce = _MAX_GYRO_ACCELERATION;
   if (rightForce < -_MAX_GYRO_ACCELERATION) rightForce = -_MAX_GYRO_ACCELERATION;
-  debugPulse(debugPin1, 2);
+  leftRecentCmPS = leftActualCmPS;
+  rightRecentCmPS = rightActualCmPS;
+  debugPulse(debugPin1, 1);
+}
+
+void speedCheck(signed long currentMillis) {
+  //debugPulse(debugPin1, 3);
+  if (currentMillis - leftLastRealInterrupt > 890) {
+    leftActualCmPS = 0;
+  }
+  if (currentMillis - rightLastRealInterrupt > 890) {
+    rightActualCmPS = 0;
+  }
+  static bool safetyReady = false;
+  if (shifter == 'D' && (abs(leftActualCmPS) > _SAFETY_SPEED_LIMIT || abs(rightActualCmPS) > _SAFETY_SPEED_LIMIT)) {
+    if (safetyReady) { // apply safety break only for 2 consecutive speed violation
+      shifter = 'P';
+      if (_SERIAL_CTRL && _SERIAL_INFO) {
+        Serial.print("[P] forced; exceed _SAFETY_SPEED_LIMIT:");
+        Serial.print(_SAFETY_SPEED_LIMIT);
+        Serial.print(";l");
+        Serial.print(leftActualCmPS);
+        Serial.print(";r");
+        Serial.print(rightActualCmPS);
+        Serial.println("cm/s;");
+      }
+    } else {
+      safetyReady = true;  // 1st violation gracefully ignored
+    }
+  } else {
+    safetyReady = false;
+  }
+  //debugPulse(debugPin1, 4);
 }
 
 /***
   * Increments changes on left hall effect sensor and detects direction.
   */
-void leftHallInc() {
+void leftHallInc(signed long currentMillis) {
+  //debugPulse(debugPin2, 1);
+  static bool recentHallBlueState;
   bool leftHallYellowState = digitalRead(leftHallYellowPin);
-  if (!leftHallYellowState) {
-    if (abs(leftActualCmPS) < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
-      if (!digitalRead(leftHallBluePin)) {
-        if (leftClockwise == -1) leftDirectionChanged++;
-        if (leftClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) leftClockwise++;
+  bool leftHallBlueState = digitalRead(leftHallBluePin);
+  if (!leftHallYellowState && recentHallBlueState != leftHallBlueState) {
+    //debugPulse(debugPin2, 3);
+    signed int elipsedMillis = currentMillis - leftLastRealInterrupt;
+    leftLastRealInterrupt = currentMillis;
+    signed int absSpeed = 0;
+    if (elipsedMillis < 890) {
+      absSpeed = 3560 / elipsedMillis;
+    }
+    if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
+      if (!leftHallBlueState) {
+        if (absSpeed < 5) leftClockwise = 0;
+        else if (leftClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) leftClockwise++;
       } else {
-        if (leftClockwise == 0) leftDirectionChanged++;
-        if (leftClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) leftClockwise--;
+        if (absSpeed < 5) leftClockwise = -1;
+        else if (leftClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) leftClockwise--;
       }
     }
-    leftIncrements++;
+    leftActualCmPS = (leftClockwise < 0 ? -1 : 1) * absSpeed;
   }
+  recentHallBlueState = leftHallBlueState;
+  //debugPulse(debugPin2, 1);
 }
 
 /***
   * Increments changes on right hall effect sensor and detects direction.
   */
-void rightHallInc() {
+void rightHallInc(signed long currentMillis) {
+  //debugPulse(debugPin2, 2);
+  static bool recentHallBlueState;
   bool rightHallYellowState = digitalRead(rightHallYellowPin);
-  if (!rightHallYellowState) {
-    if (abs(rightActualCmPS) < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
-      if (!digitalRead(rightHallBluePin)) {
-        if (rightClockwise == -1) rightDirectionChanged++;
-        if (rightClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) rightClockwise++;
+  bool rightHallBlueState = digitalRead(rightHallBluePin);
+  digitalWrite(debugPin1, rightHallYellowState);
+  digitalWrite(debugPin2, rightHallBlueState);
+  if (!rightHallYellowState && recentHallBlueState != rightHallBlueState) {
+    //debugPulse(debugPin2, 3);
+    signed int elipsedMillis = currentMillis - rightLastRealInterrupt;
+    rightLastRealInterrupt = currentMillis;
+    signed int absSpeed = 0;
+    if (elipsedMillis < 890) {
+      absSpeed = 3560 / elipsedMillis;
+    }
+    if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
+      if (!rightHallBlueState) {
+        if (absSpeed < 5) rightClockwise = 0;
+        else if (rightClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) rightClockwise++;
       } else {
-        if (rightClockwise == 0) rightDirectionChanged++;
-        if (rightClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) rightClockwise--;
+        if (absSpeed < 5) rightClockwise = -1;
+        else if (rightClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) rightClockwise--;
       }
     }
-    rightIncrements++;
+    rightActualCmPS = (rightClockwise < 0 ? -1 : 1) * absSpeed;
   }
+  recentHallBlueState = rightHallBlueState;
+  //debugPulse(debugPin2, 2);
 }
 
 /***
@@ -484,10 +482,6 @@ inline void serialInfo() {
   Serial.print(leftTargetCmPS);
   Serial.print(";");
   Serial.print(rightTargetCmPS);
-  Serial.print(";dc:");
-  Serial.print(leftDirectionChanged);
-  Serial.print(";");
-  Serial.print(rightDirectionChanged);
   Serial.println(";");
 }
 #else
@@ -747,7 +741,7 @@ void setup() {
  */
 void loop() {
   static unsigned long pmTx =  0;
-  static unsigned long pmCalculateIncInPeriod =  0;
+  static unsigned long pmSpeedCheck =  0;
   static unsigned long pmAutocruise =  0;
   static unsigned long pmListenControl =  0;
   static unsigned long pmSerialInfo =  0;
@@ -770,7 +764,7 @@ void loop() {
   if (leftHallInterrupted
       && leftHallInterrupted < currentMicros
       && microsTillNextTx > 50) { //it takes ~50us on 16MHz
-    leftHallInc();
+    leftHallInc(currentMicros / 1000);
     leftHallInterrupted = 0;
     return;
   }
@@ -778,19 +772,20 @@ void loop() {
   if (rightHallInterrupted
       && rightHallInterrupted < currentMicros
       && microsTillNextTx > 50) {  //it takes ~50us on 16MHz
-    rightHallInc();
+    rightHallInc(currentMicros / 1000);
     rightHallInterrupted = 0;
     return;
   }
 
-  if (currentMicros - pmCalculateIncInPeriod >= 175000
-      && microsTillNextTx > 25) { //it takes ~25us on 16MHz
-    pmCalculateIncInPeriod = currentMicros;
-    calculateIncInPeriod();
+
+  if (currentMicros - pmSpeedCheck >= 200000
+      && microsTillNextTx > 25) {
+    pmSpeedCheck = currentMicros;
+    speedCheck(currentMicros / 1000);
     return;
   }
 
-  if (directedby == Autocruise && currentMicros - pmAutocruise >= 175000
+  if (directedby == Autocruise && currentMicros - pmAutocruise >= 150000
       && microsTillNextTx > 25) { // it takes ~20us on 16MHz
     pmAutocruise = currentMicros;
     calculateAutocruise();
@@ -801,7 +796,7 @@ void loop() {
     if (microsTillNextTx > 50) {
       listenSerialControl();
     }
-    if (_SERIAL_INFO && currentMicros - pmSerialInfo >= 2000000
+    if (_SERIAL_INFO && currentMicros - pmSerialInfo >= 500000
       && microsTillNextTx > 200) { //it takes ~420us on 16MHz
       pmSerialInfo = currentMicros;
       serialInfo();
