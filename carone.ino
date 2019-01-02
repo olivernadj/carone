@@ -14,7 +14,7 @@
 //   Long 875 us cycles (time between 2 start bit) happen 10/1 times.
 
 // Optional Arduino serial for debugging and controlling.
-#define _SERIAL_CTRL 19200 // bandwidth or 0 means disabled.
+#define _SERIAL_CTRL 9600 // bandwidth or 0 means disabled.
 #define _SERIAL_TIMEOUT 5 // Time limits for reading serial inputs in millis. Unfortunately sometimes 5 millis not enough, but with longer time limit there would be not enough time between UART frames.
 #define _SERIAL_INFO 1 // Serial var dump is time expensive. Not recommended in production.
 
@@ -51,16 +51,22 @@ the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 
 // =========== END OF SETTINGS FOR DRIVING MECHANISM =========================//
 
+SoftSerialParallelWrite  mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
+const int debugPin2            =  A5; // Used for Debug only if _DEBUG enabled
+const int debugPin1            =  A4; // Used for Debug only if _DEBUG enabled
+const int inputSelector        =   7; // Hijack gyro sensor communication. It controls the source for multiplexer (gyro-daughterboard VS CarOne).
+const int rightHallBluePin     =  A3; // Hall effect direction check.
+const int leftHallBluePin      =  A2; // Same as above, but for the left wheel.
+const int rightHallYellowPin   =  A1; // Hall effect triggering, as interrupt.
+const int leftHallYellowPin    =  A0; // Same as above, but for the left wheel.
+const int shmittTriggerUpper   = 450; // (1025 / 5) * 2.2V
+const int shmittTriggerMiddle  = 337; // (1025 / 5) * 1.65V
+const int shmittTriggerLower   = 225; // (1025 / 5) * 1.1V
 
-SoftSerialParallelWrite mySerial(2); // register 2 lower ports of PORTB for parallel UART transmission
-const int debugPin2            = A5; // Used for Debug only if _DEBUG enabled
-const int debugPin1            = A4; // Used for Debug only if _DEBUG enabled
-const int inputSelector        =  7; // Hijack gyro sensor communication. It controls the source for multiplexer (gyro-daughterboard VS CarOne).
-const int rightHallBluePin     =  5; // Hall effect direction check.
-const int leftHallBluePin      =  4; // Same as above, but for the right wheel.
-const int rightHallYellowPin   =  3; // Hall effect triggering, as interrupt.
-const int leftHallYellowPin    =  2; // Same as above, but for the right wheel
-
+uint8_t rightHallBlueState;
+uint8_t leftHallBlueState;
+uint8_t rightHallYellowState;
+uint8_t leftHallYellowState;
 
 signed long leftLastRealInterrupt  = 0; // when did the last hall interrupt happened.
 signed long rightLastRealInterrupt = 0; // Same as above, but for the right wheel.
@@ -105,6 +111,38 @@ inline void debugPulse(uint8_t pin, uint16_t count) {
 #else
 inline void debugPulse(uint8_t, uint16_t) {}
 #endif
+
+
+#define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
+#define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
+
+bool analogReadStart(uint8_t pin) {
+  if (ADCSRA & (1<<ADSC)) {
+    return false; // return false if ADC is busy
+  }
+  if (pin >= 14) pin -= 14; // allow for channel or pin numbers
+  // set the analog reference (high two bits of ADMUX) and select the
+  // channel (low 4 bits).  this also sets ADLAR (left-adjust result)
+  // to 0 (the default).
+  ADMUX = (1<<REFS0)| (pin & 0x07);
+  // start the conversion
+  sbi(ADCSRA, ADSC);
+  return true;
+}
+
+int analogReadResult() {
+  uint8_t low, high;
+  // ADSC is cleared when the conversion finishes
+  while (ADCSRA & (1<<ADSC));
+  // we have to read ADCL first; doing so locks both ADCL
+  // and ADCH until ADCH is read.  reading ADCL second would
+  // cause the results of each conversion to be discarded,
+  // as ADCL and ADCH would be locked when it completed.
+  low  = ADCL;
+  high = ADCH;
+  // combine the two bytes
+  return (high << 8) | low;
+}
 
 /***
  * Transmits imitated UART signal, just like gyro sensor does.
@@ -175,7 +213,7 @@ void writeCurrentSpeed() {
   * @todo: need to be implemented
   */
 void calculateAutocruise() {
-  debugPulse(debugPin1, 1);
+  //debugPulse(debugPin1, 1);
   signed int leftRecentCmPS  = 0;
   signed int rightRecentCmPS = 0;
   static bool onMyWay = false;
@@ -271,7 +309,7 @@ void calculateAutocruise() {
   if (rightForce < -_MAX_GYRO_ACCELERATION) rightForce = -_MAX_GYRO_ACCELERATION;
   leftRecentCmPS = leftActualCmPS;
   rightRecentCmPS = rightActualCmPS;
-  debugPulse(debugPin1, 1);
+  //debugPulse(debugPin1, 1);
 }
 
 void speedCheck(signed long currentMillis) {
@@ -312,6 +350,8 @@ void leftHallInc(signed long currentMillis) {
   static bool recentHallBlueState;
   bool leftHallYellowState = digitalRead(leftHallYellowPin);
   bool leftHallBlueState = digitalRead(leftHallBluePin);
+  digitalWrite(debugPin1, leftHallYellowState);
+  digitalWrite(debugPin2, leftHallBlueState);
   if (!leftHallYellowState && recentHallBlueState != leftHallBlueState) {
     //debugPulse(debugPin2, 3);
     signed int elipsedMillis = currentMillis - leftLastRealInterrupt;
@@ -343,9 +383,8 @@ void rightHallInc(signed long currentMillis) {
   static bool recentHallBlueState;
   bool rightHallYellowState = digitalRead(rightHallYellowPin);
   bool rightHallBlueState = digitalRead(rightHallBluePin);
-  digitalWrite(debugPin1, rightHallYellowState);
-  digitalWrite(debugPin2, rightHallBlueState);
-  if (!rightHallYellowState && recentHallBlueState != rightHallBlueState) {
+  //if (!rightHallYellowState && recentHallBlueState != rightHallBlueState) {
+  if (!rightHallYellowState) {
     //debugPulse(debugPin2, 3);
     signed int elipsedMillis = currentMillis - rightLastRealInterrupt;
     rightLastRealInterrupt = currentMillis;
@@ -380,6 +419,98 @@ void leftHallInterrupt() {
   */
 void rightHallInterrupt() {
   rightHallInterrupted = micros() + _HALL_INTERRUP_GRACE_PERIOD;
+}
+
+
+void schmittTrigger(signed long currentMillis) {
+  static bool pinPointer = true;
+  static bool leftRecentHallBlueState;
+  static bool rightRecentHallBlueState;
+  bool stateChanged = false;
+  int adcResult;
+  int elipsedMillis;
+  int absSpeed = 0;
+
+  adcResult = analogReadResult();
+  if (pinPointer) { // leftHallYellowPin
+    if (leftHallYellowState == HIGH && adcResult < shmittTriggerLower) {
+      leftHallYellowState = LOW;
+      stateChanged = true;
+    } else if (leftHallYellowState == LOW && adcResult > shmittTriggerUpper) {
+      leftHallYellowState = HIGH;
+      stateChanged = true;
+    }
+    if (stateChanged) {
+      digitalWrite(debugPin2, leftHallYellowState);
+      analogReadStart(leftHallBluePin);
+      if (leftHallYellowState == LOW) {
+        elipsedMillis = currentMillis - leftLastRealInterrupt;
+        leftLastRealInterrupt = currentMillis;
+        if (elipsedMillis < 890) {
+          absSpeed = 3560 / elipsedMillis;
+        }
+      }
+      adcResult = analogReadResult();
+      if (adcResult < shmittTriggerMiddle) {
+        leftHallBlueState = LOW;
+      } else {
+        leftHallBlueState = HIGH;
+      }
+      if (leftHallYellowState == LOW && leftRecentHallBlueState != leftHallBlueState) {
+        if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
+          if (!leftHallBlueState) {
+            if (absSpeed < 5) leftClockwise = 0;
+            else if (leftClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) leftClockwise++;
+          } else {
+            if (absSpeed < 5) leftClockwise = -1;
+            else if (leftClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) leftClockwise--;
+          }
+        }
+        leftActualCmPS = (leftClockwise < 0 ? -1 : 1) * absSpeed;
+      }
+      leftRecentHallBlueState = leftHallBlueState;
+    }
+    analogReadStart(rightHallYellowPin);
+  } else { // rightHallYellowPin
+    if (rightHallYellowState == HIGH && adcResult < shmittTriggerLower) {
+      rightHallYellowState = LOW;
+      stateChanged = true;
+    } else if (rightHallYellowState == LOW && adcResult > shmittTriggerUpper) {
+      rightHallYellowState = HIGH;
+      stateChanged = true;
+    }
+    if (stateChanged) {
+      analogReadStart(rightHallBluePin);
+      if (rightHallYellowState == LOW) {
+        elipsedMillis = currentMillis - rightLastRealInterrupt;
+        rightLastRealInterrupt = currentMillis;
+        if (elipsedMillis < 890) {
+          absSpeed = 3560 / elipsedMillis;
+        }
+      }
+      adcResult = analogReadResult();
+      if (adcResult < shmittTriggerMiddle) {
+        rightHallBlueState = LOW;
+      } else {
+        rightHallBlueState = HIGH;
+      }
+      if (rightHallYellowState == LOW && rightRecentHallBlueState != rightHallBlueState) {
+        if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
+          if (!rightHallBlueState) {
+            if (absSpeed < 5) rightClockwise = 0;
+            else if (rightClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) rightClockwise++;
+          } else {
+            if (absSpeed < 5) rightClockwise = -1;
+            else if (rightClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) rightClockwise--;
+          }
+        }
+        rightActualCmPS = (rightClockwise < 0 ? -1 : 1) * absSpeed;
+      }
+      rightRecentHallBlueState = rightHallBlueState;
+    }
+    analogReadStart(leftHallYellowPin);
+  }
+  pinPointer = !pinPointer;
 }
 
 /***
@@ -720,14 +851,13 @@ void setup() {
     pinMode(debugPin1, OUTPUT);
     pinMode(debugPin2, OUTPUT);
   }
-  pinMode(leftHallYellowPin, INPUT);
-  pinMode(leftHallBluePin, INPUT);
-  pinMode(rightHallYellowPin, INPUT);
-  pinMode(rightHallBluePin, INPUT);
   pinMode(inputSelector, OUTPUT);
   digitalWrite(inputSelector, HIGH); // by start no hijack
-  attachInterrupt(digitalPinToInterrupt(leftHallYellowPin),leftHallInterrupt,FALLING);
-  attachInterrupt(digitalPinToInterrupt(rightHallYellowPin),rightHallInterrupt,FALLING);
+  // AREF = AVcc. Default reference voltage(5V in case of Arduino Uno).  
+  ADMUX = (1<<REFS0);
+  // ADC Enable and prescaler of 128
+  // 16000000/128 = 125000
+  ADCSRA = (1<<ADEN)|(1<<ADPS2);
   mySerial.begin(_GYRO_SERIAL, 11); // hover board UART baud-rate and frame size
   serialInit();
   wireInit();
@@ -741,6 +871,7 @@ void setup() {
  */
 void loop() {
   static unsigned long pmTx =  0;
+  static unsigned long pmSchmittTrigger =  0;
   static unsigned long pmSpeedCheck =  0;
   static unsigned long pmAutocruise =  0;
   static unsigned long pmListenControl =  0;
@@ -761,22 +892,29 @@ void loop() {
     microsTillNextTx = pmTx + txLength - currentMicros;
   }
 
-  if (leftHallInterrupted
-      && leftHallInterrupted < currentMicros
-      && microsTillNextTx > 50) { //it takes ~50us on 16MHz
-    leftHallInc(currentMicros / 1000);
-    leftHallInterrupted = 0;
+  // if (leftHallInterrupted
+  //     && leftHallInterrupted < currentMicros
+  //     && microsTillNextTx > 50) { //it takes ~50us on 16MHz
+  //   leftHallInc(currentMicros / 1000);
+  //   leftHallInterrupted = 0;
+  //   return;
+  // }
+
+  // if (rightHallInterrupted
+  //     && rightHallInterrupted < currentMicros
+  //     && microsTillNextTx > 50) {  //it takes ~50us on 16MHz
+  //   rightHallInc(currentMicros / 1000);
+  //   rightHallInterrupted = 0;
+  //   return;
+  //
+  if (currentMicros - pmSchmittTrigger >= 200
+      && microsTillNextTx > 55) {  //it takes ~55us-76us on 16MHz
+    debugPulse(debugPin1, 1);
+    schmittTrigger(currentMicros / 1000);
+    debugPulse(debugPin1, 2);
+    pmSchmittTrigger = currentMicros;
     return;
   }
-
-  if (rightHallInterrupted
-      && rightHallInterrupted < currentMicros
-      && microsTillNextTx > 50) {  //it takes ~50us on 16MHz
-    rightHallInc(currentMicros / 1000);
-    rightHallInterrupted = 0;
-    return;
-  }
-
 
   if (currentMicros - pmSpeedCheck >= 200000
       && microsTillNextTx > 25) {
