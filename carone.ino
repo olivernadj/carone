@@ -43,11 +43,10 @@ the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 #define _AUTOCRUISE_DUAL_START_FORCE 80 // Initial force. Dual mode means both wheels are working and the acceleration happens exponentially, therefor need to converge to zero. Zero force means keep velocity.
 #define _AUTOCRUISE_DUAL_FORCE_INC 5 // Force adjusting increments or decrements. Only used for acceleration from 0 speed.
 // Settings for hall sensor of the wheel.
-#define _HALL_DIRECTION_DETECT_LIMIT 120 // Detects direction (cw,ccw) under this wheel RPM limit.
+#define _HALL_DIRECTION_DETECT_LIMIT 120 // Detects direction (cw,ccw) under this wheel cm/s limit.
 // Although ccw status logically is a boolean, we need to avoid hall check errors. The implemented software solution is to incrementally enforcing the status on each sampling. This method absorbs occasional sampling errors.
 #define _HALL_CLOCKWISE_PROBABILITY_CW 6 // Maximum cw enforcement. Example: ccw: -3, -2, -1; cw: 0, 1, 2
 #define _HALL_CLOCKWISE_PROBABILITY_CCW -7 // Maximum cw enforcement. Example: ccw: -3, -2, -1; cw: 0, 1, 2
-#define _HALL_INTERRUP_GRACE_PERIOD 500 // Interrupt handler will wait x micros before read pin status.
 
 // =========== END OF SETTINGS FOR DRIVING MECHANISM =========================//
 
@@ -55,10 +54,10 @@ SoftSerialParallelWrite  mySerial(2); // register 2 lower ports of PORTB for par
 const int debugPin2            =  A5; // Used for Debug only if _DEBUG enabled
 const int debugPin1            =  A4; // Used for Debug only if _DEBUG enabled
 const int inputSelector        =   7; // Hijack gyro sensor communication. It controls the source for multiplexer (gyro-daughterboard VS CarOne).
-const int rightHallBluePin     =  A3; // Hall effect direction check.
-const int leftHallBluePin      =  A2; // Same as above, but for the left wheel.
-const int rightHallYellowPin   =  A1; // Hall effect triggering, as interrupt.
-const int leftHallYellowPin    =  A0; // Same as above, but for the left wheel.
+const int rightHallBluePin     =  A0; // Hall effect direction check.
+const int leftHallBluePin      =  A1; // Same as above, but for the left wheel.
+const int rightHallYellowPin   =  A2; // Hall effect triggering, as interrupt.
+const int leftHallYellowPin    =  A3; // Same as above, but for the left wheel.
 const int shmittTriggerUpper   = 450; // (1025 / 5) * 2.2V
 const int shmittTriggerMiddle  = 337; // (1025 / 5) * 1.65V
 const int shmittTriggerLower   = 225; // (1025 / 5) * 1.1V
@@ -88,10 +87,7 @@ enum directions {Acceleration, Autocruise} directedby = _DEFAULT_DIRECTION;
 
 volatile byte i2cReg = 0xFF; // Storage for I2C internal register address.
 
-volatile unsigned long leftHallInterrupted  = 0; //0 means no interruption, otherwise interruption happened at a micro time stamp + _HALL_INTERRUP_GRACE_PERIOD
-volatile unsigned long rightHallInterrupted = 0; //Same as above, but for the right wheel.
-
-/***
+/**
  * Debugging
  *
  * This function generates a brief pulse
@@ -112,10 +108,12 @@ inline void debugPulse(uint8_t pin, uint16_t count) {
 inline void debugPulse(uint8_t, uint16_t) {}
 #endif
 
+#define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit)) // Macro Set bit in IO port port.
+#define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit)) // Macro Clear bit in IO port port.
 
-#define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
-#define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
-
+/**
+ * Trigger an analog read background task for given pin.
+ */
 bool analogReadStart(uint8_t pin) {
   if (ADCSRA & (1<<ADSC)) {
     return false; // return false if ADC is busy
@@ -130,6 +128,9 @@ bool analogReadStart(uint8_t pin) {
   return true;
 }
 
+/**
+ * Reads the result from analog measurement done in background.
+ */
 int analogReadResult() {
   uint8_t low, high;
   // ADSC is cleared when the conversion finishes
@@ -144,7 +145,7 @@ int analogReadResult() {
   return (high << 8) | low;
 }
 
-/***
+/**
  * Transmits imitated UART signal, just like gyro sensor does.
  * Uses SoftSerialParallelWrite library what enables to do multiple UART
  * transmission with same frame size and baud-rate
@@ -208,9 +209,9 @@ void writeCurrentSpeed() {
   }
 }
 
-/***
+/**
   * Calculates necessary acceleration to catch up with target speed
-  * @todo: need to be implemented
+  *
   */
 void calculateAutocruise() {
   //debugPulse(debugPin1, 1);
@@ -312,8 +313,13 @@ void calculateAutocruise() {
   //debugPulse(debugPin1, 1);
 }
 
-void speedCheck(signed long currentMillis) {
-  //debugPulse(debugPin1, 3);
+/**
+ * Sets the speed to 0 if no hall interruption for a given period.
+ * Applies safety brake when unleashed. - "Normally" the hoverboard looses 
+ * control above 140 cm/s and accelerates to max speed uncontrollable  
+ */
+void speedCheck() {
+  signed long currentMillis = millis();
   if (currentMillis - leftLastRealInterrupt > 890) {
     leftActualCmPS = 0;
   }
@@ -339,90 +345,16 @@ void speedCheck(signed long currentMillis) {
   } else {
     safetyReady = false;
   }
-  //debugPulse(debugPin1, 4);
 }
 
-/***
-  * Increments changes on left hall effect sensor and detects direction.
-  */
-void leftHallInc(signed long currentMillis) {
-  //debugPulse(debugPin2, 1);
-  static bool recentHallBlueState;
-  bool leftHallYellowState = digitalRead(leftHallYellowPin);
-  bool leftHallBlueState = digitalRead(leftHallBluePin);
-  digitalWrite(debugPin1, leftHallYellowState);
-  digitalWrite(debugPin2, leftHallBlueState);
-  if (!leftHallYellowState && recentHallBlueState != leftHallBlueState) {
-    //debugPulse(debugPin2, 3);
-    signed int elipsedMillis = currentMillis - leftLastRealInterrupt;
-    leftLastRealInterrupt = currentMillis;
-    signed int absSpeed = 0;
-    if (elipsedMillis < 890) {
-      absSpeed = 3560 / elipsedMillis;
-    }
-    if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
-      if (!leftHallBlueState) {
-        if (absSpeed < 5) leftClockwise = 0;
-        else if (leftClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) leftClockwise++;
-      } else {
-        if (absSpeed < 5) leftClockwise = -1;
-        else if (leftClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) leftClockwise--;
-      }
-    }
-    leftActualCmPS = (leftClockwise < 0 ? -1 : 1) * absSpeed;
-  }
-  recentHallBlueState = leftHallBlueState;
-  //debugPulse(debugPin2, 1);
-}
-
-/***
-  * Increments changes on right hall effect sensor and detects direction.
-  */
-void rightHallInc(signed long currentMillis) {
-  //debugPulse(debugPin2, 2);
-  static bool recentHallBlueState;
-  bool rightHallYellowState = digitalRead(rightHallYellowPin);
-  bool rightHallBlueState = digitalRead(rightHallBluePin);
-  //if (!rightHallYellowState && recentHallBlueState != rightHallBlueState) {
-  if (!rightHallYellowState) {
-    //debugPulse(debugPin2, 3);
-    signed int elipsedMillis = currentMillis - rightLastRealInterrupt;
-    rightLastRealInterrupt = currentMillis;
-    signed int absSpeed = 0;
-    if (elipsedMillis < 890) {
-      absSpeed = 3560 / elipsedMillis;
-    }
-    if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
-      if (!rightHallBlueState) {
-        if (absSpeed < 5) rightClockwise = 0;
-        else if (rightClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) rightClockwise++;
-      } else {
-        if (absSpeed < 5) rightClockwise = -1;
-        else if (rightClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) rightClockwise--;
-      }
-    }
-    rightActualCmPS = (rightClockwise < 0 ? -1 : 1) * absSpeed;
-  }
-  recentHallBlueState = rightHallBlueState;
-  //debugPulse(debugPin2, 2);
-}
-
-/***
-  * Handles interrupt.
-  */
-void leftHallInterrupt() {
-  leftHallInterrupted = micros() + _HALL_INTERRUP_GRACE_PERIOD;
-}
-
-/***
-  * Handles interrupt.
-  */
-void rightHallInterrupt() {
-  rightHallInterrupted = micros() + _HALL_INTERRUP_GRACE_PERIOD;
-}
-
-
-void schmittTrigger(signed long currentMillis) {
+/**
+ * Implements Schmitt Trigger on analog pins and calculates the wheel speed.
+ * Although analogRead() function takes 100 microseconds it can be scaled down
+ * and even put it into a background task. 
+ * @see http://yaab-arduino.blogspot.com/2015/02/fast-sampling-from-analog-input.html
+ * @see 
+ */
+void schmittTrigger() {
   static bool pinPointer = true;
   static bool leftRecentHallBlueState;
   static bool rightRecentHallBlueState;
@@ -430,7 +362,7 @@ void schmittTrigger(signed long currentMillis) {
   int adcResult;
   int elipsedMillis;
   int absSpeed = 0;
-
+  signed long currentMillis;
   adcResult = analogReadResult();
   if (pinPointer) { // leftHallYellowPin
     if (leftHallYellowState == HIGH && adcResult < shmittTriggerLower) {
@@ -441,34 +373,42 @@ void schmittTrigger(signed long currentMillis) {
       stateChanged = true;
     }
     if (stateChanged) {
-      digitalWrite(debugPin2, leftHallYellowState);
-      analogReadStart(leftHallBluePin);
+      // digitalWrite(debugPin2, leftHallYellowState);
+      if (abs(leftActualCmPS) < _HALL_DIRECTION_DETECT_LIMIT) analogReadStart(leftHallBluePin);
       if (leftHallYellowState == LOW) {
+        currentMillis = millis();
         elipsedMillis = currentMillis - leftLastRealInterrupt;
-        leftLastRealInterrupt = currentMillis;
-        if (elipsedMillis < 890) {
+        if (elipsedMillis < 11) {
+          absSpeed = 356;
+        } else if (elipsedMillis < 890) {
           absSpeed = 3560 / elipsedMillis;
         }
       }
-      adcResult = analogReadResult();
-      if (adcResult < shmittTriggerMiddle) {
-        leftHallBlueState = LOW;
-      } else {
-        leftHallBlueState = HIGH;
-      }
-      if (leftHallYellowState == LOW && leftRecentHallBlueState != leftHallBlueState) {
-        if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
-          if (!leftHallBlueState) {
-            if (absSpeed < 5) leftClockwise = 0;
-            else if (leftClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) leftClockwise++;
-          } else {
-            if (absSpeed < 5) leftClockwise = -1;
-            else if (leftClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) leftClockwise--;
-          }
+      if (abs(leftActualCmPS) < _HALL_DIRECTION_DETECT_LIMIT)  {
+        adcResult = analogReadResult();
+        if (adcResult < shmittTriggerMiddle) {
+          leftHallBlueState = LOW;
+        } else {
+          leftHallBlueState = HIGH;
         }
-        leftActualCmPS = (leftClockwise < 0 ? -1 : 1) * absSpeed;
+        if (leftHallYellowState == LOW && leftRecentHallBlueState != leftHallBlueState) {
+          if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
+            if (leftHallBlueState) {
+              if (absSpeed < 5) leftClockwise = 0;
+              else if (leftClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) leftClockwise++;
+            } else {
+              if (absSpeed < 5) leftClockwise = -1;
+              else if (leftClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) leftClockwise--;
+            }
+          }
+          leftLastRealInterrupt = currentMillis;
+          leftActualCmPS = (leftClockwise < 0 ? -1 : 1) * absSpeed;
+        }
+        leftRecentHallBlueState = leftHallBlueState;
+      } else if(leftHallYellowState == LOW) {
+        leftLastRealInterrupt = currentMillis;
+        leftActualCmPS = (leftClockwise < 0 ? -1 : 1) * absSpeed;        
       }
-      leftRecentHallBlueState = leftHallBlueState;
     }
     analogReadStart(rightHallYellowPin);
   } else { // rightHallYellowPin
@@ -480,40 +420,49 @@ void schmittTrigger(signed long currentMillis) {
       stateChanged = true;
     }
     if (stateChanged) {
-      analogReadStart(rightHallBluePin);
+      // digitalWrite(debugPin2, rightHallYellowState);
+      if (abs(rightActualCmPS) < _HALL_DIRECTION_DETECT_LIMIT) analogReadStart(rightHallBluePin);
       if (rightHallYellowState == LOW) {
+        currentMillis = millis();
         elipsedMillis = currentMillis - rightLastRealInterrupt;
-        rightLastRealInterrupt = currentMillis;
-        if (elipsedMillis < 890) {
+        if (elipsedMillis < 11) {
+          absSpeed = 356;
+        } else if (elipsedMillis < 890) {
           absSpeed = 3560 / elipsedMillis;
         }
       }
-      adcResult = analogReadResult();
-      if (adcResult < shmittTriggerMiddle) {
-        rightHallBlueState = LOW;
-      } else {
-        rightHallBlueState = HIGH;
-      }
-      if (rightHallYellowState == LOW && rightRecentHallBlueState != rightHallBlueState) {
-        if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
-          if (!rightHallBlueState) {
-            if (absSpeed < 5) rightClockwise = 0;
-            else if (rightClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) rightClockwise++;
-          } else {
-            if (absSpeed < 5) rightClockwise = -1;
-            else if (rightClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) rightClockwise--;
-          }
+      if (abs(rightActualCmPS) < _HALL_DIRECTION_DETECT_LIMIT)  {
+        adcResult = analogReadResult();
+        if (adcResult < shmittTriggerMiddle) {
+          rightHallBlueState = LOW;
+        } else {
+          rightHallBlueState = HIGH;
         }
-        rightActualCmPS = (rightClockwise < 0 ? -1 : 1) * absSpeed;
+        if (rightHallYellowState == LOW && rightRecentHallBlueState != rightHallBlueState) {
+          if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
+            if (rightHallBlueState) {
+              if (absSpeed < 5) rightClockwise = 0;
+              else if (rightClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) rightClockwise++;
+            } else {
+              if (absSpeed < 5) rightClockwise = -1;
+              else if (rightClockwise > _HALL_CLOCKWISE_PROBABILITY_CCW) rightClockwise--;
+            }
+          }
+          rightLastRealInterrupt = currentMillis;
+          rightActualCmPS = (rightClockwise < 0 ? -1 : 1) * absSpeed;
+        }
+        rightRecentHallBlueState = rightHallBlueState;
+      } else if(rightHallYellowState == LOW) {
+        rightLastRealInterrupt = currentMillis;
+        rightActualCmPS = (rightClockwise < 0 ? -1 : 1) * absSpeed;        
       }
-      rightRecentHallBlueState = rightHallBlueState;
     }
     analogReadStart(leftHallYellowPin);
   }
   pinPointer = !pinPointer;
 }
 
-/***
+/**
  * Reads control from serial port.
  * For debugging purpose mostly.
  */
@@ -589,7 +538,7 @@ inline void listenSerialControl() {
 inline void listenSerialControl() {}
 #endif
 
-/***
+/**
  * Print status info on hardware serial connection for mostly debugging purpose.
  */
 #if _SERIAL_CTRL
@@ -619,7 +568,7 @@ inline void serialInfo() {
 inline void serialInfo() {}
 #endif
 
-/***
+/**
  * Initializes hardware serial connection for mostly debugging purpose.
  */
 #if _SERIAL_CTRL
@@ -649,7 +598,7 @@ inline void serialInit() {
 inline void serialInit() {}
 #endif
 
-/***
+/**
  * Receives I2C data from master, what can use for control or set the reading
  * intention.
  */
@@ -749,7 +698,7 @@ inline void i2cReceiveEvent(int howMany) {
 inline void i2cReceiveEvent(int) {}
 #endif
 
-/***
+/**
  * Responses to I2C request from master.
  */
 #if _I2C_CTRL
@@ -830,7 +779,7 @@ inline void i2cRequestEvent() {
 inline void i2cRequestEvent() {}
 #endif
 
-/***
+/**
  * Initializes I2C wire connection for control.
  */
 #if _I2C_CTRL
@@ -843,7 +792,7 @@ inline void wireInit() {
 inline void wireInit() {}
 #endif
 
-/***
+/**
   * arduino setup
   */
 void setup() {
@@ -863,7 +812,7 @@ void setup() {
   wireInit();
 }
 
-/***
+/**
  * The loop function is responsible for (time) even handling.
  * The checks are ordered by importance. Maximum one hander function can be
  * called in each loop. E.g. serial write will not be delayed with multiple
@@ -892,25 +841,10 @@ void loop() {
     microsTillNextTx = pmTx + txLength - currentMicros;
   }
 
-  // if (leftHallInterrupted
-  //     && leftHallInterrupted < currentMicros
-  //     && microsTillNextTx > 50) { //it takes ~50us on 16MHz
-  //   leftHallInc(currentMicros / 1000);
-  //   leftHallInterrupted = 0;
-  //   return;
-  // }
-
-  // if (rightHallInterrupted
-  //     && rightHallInterrupted < currentMicros
-  //     && microsTillNextTx > 50) {  //it takes ~50us on 16MHz
-  //   rightHallInc(currentMicros / 1000);
-  //   rightHallInterrupted = 0;
-  //   return;
-  //
-  if (currentMicros - pmSchmittTrigger >= 200
-      && microsTillNextTx > 55) {  //it takes ~55us-76us on 16MHz
+  if (currentMicros - pmSchmittTrigger >= 380
+      && microsTillNextTx > 25) {  //it takes ~16us-37us on 16MHz
     debugPulse(debugPin1, 1);
-    schmittTrigger(currentMicros / 1000);
+    schmittTrigger();
     debugPulse(debugPin1, 2);
     pmSchmittTrigger = currentMicros;
     return;
@@ -919,7 +853,7 @@ void loop() {
   if (currentMicros - pmSpeedCheck >= 200000
       && microsTillNextTx > 25) {
     pmSpeedCheck = currentMicros;
-    speedCheck(currentMicros / 1000);
+    speedCheck();
     return;
   }
 

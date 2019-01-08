@@ -26,7 +26,7 @@ Force | Speed
 ### Conversions
 Conversions between common units of speed
 
-Base value | hall cycles | RPM | cm/s
+Base value | hall cycles/s | RPM | cm/s
 --- | --- | --- | ---
 **hall cycles** | 1 | 4 | 3.56
 **RPM** | 0.25 | 1 | 0.89
