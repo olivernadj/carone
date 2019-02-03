@@ -2,7 +2,7 @@
 #include <Wire.h> // I2C Wire library.
 
 // A4 and A5 can be used for debug purpose only if not used for I2C. The debug signal can be read by digital analyzer or oscilloscope.
-#define _DEBUG 1
+#define _DEBUG 0
 
 // Baud-rate, frame size and timing for UART communication between gyro-daughterboard and motherboard .
 #define _GYRO_SERIAL 26275 //Baud-rate.
@@ -19,7 +19,7 @@
 #define _SERIAL_INFO 1 // Serial var dump is time expensive. Not recommended in production.
 
 // Optional I2C settings. NOTICE: it uses the same pins - A4, A5 like signal debug .
-#define _I2C_CTRL 0//1 // 1 means enabled or 0 means disabled.
+#define _I2C_CTRL 1//1 // 1 means enabled or 0 means disabled.
 #define _I2C_BUS_ADDRESS 8
 
 #if _DEBUG && _I2C_CTRL // Throw compile error if both pin debug and I2C enabled.
@@ -45,8 +45,8 @@ the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 // Settings for hall sensor of the wheel.
 #define _HALL_DIRECTION_DETECT_LIMIT 120 // Detects direction (cw,ccw) under this wheel cm/s limit.
 // Although ccw status logically is a boolean, we need to avoid hall check errors. The implemented software solution is to incrementally enforcing the status on each sampling. This method absorbs occasional sampling errors.
-#define _HALL_CLOCKWISE_PROBABILITY_CW 6 // Maximum cw enforcement. Example: ccw: -3, -2, -1; cw: 0, 1, 2
-#define _HALL_CLOCKWISE_PROBABILITY_CCW -7 // Maximum cw enforcement. Example: ccw: -3, -2, -1; cw: 0, 1, 2
+#define _HALL_CLOCKWISE_PROBABILITY_CW 2 // Maximum cw enforcement. Example: ccw: -3, -2, -1; cw: 0, 1, 2
+#define _HALL_CLOCKWISE_PROBABILITY_CCW -3 // Maximum cw enforcement. Example: ccw: -3, -2, -1; cw: 0, 1, 2
 
 // =========== END OF SETTINGS FOR DRIVING MECHANISM =========================//
 
@@ -393,7 +393,7 @@ void schmittTrigger() {
         }
         if (leftHallYellowState == LOW && leftRecentHallBlueState != leftHallBlueState) {
           if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
-            if (leftHallBlueState) {
+            if (!leftHallBlueState) {
               if (absSpeed < 5) leftClockwise = 0;
               else if (leftClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) leftClockwise++;
             } else {
@@ -440,7 +440,7 @@ void schmittTrigger() {
         }
         if (rightHallYellowState == LOW && rightRecentHallBlueState != rightHallBlueState) {
           if (absSpeed < _HALL_DIRECTION_DETECT_LIMIT) {//only detect direction under X wheel RPM
-            if (rightHallBlueState) {
+            if (!rightHallBlueState) {
               if (absSpeed < 5) rightClockwise = 0;
               else if (rightClockwise < _HALL_CLOCKWISE_PROBABILITY_CW) rightClockwise++;
             } else {
@@ -843,9 +843,7 @@ void loop() {
 
   if (currentMicros - pmSchmittTrigger >= 380
       && microsTillNextTx > 25) {  //it takes ~16us-37us on 16MHz
-    debugPulse(debugPin1, 1);
     schmittTrigger();
-    debugPulse(debugPin1, 2);
     pmSchmittTrigger = currentMicros;
     return;
   }
@@ -853,14 +851,18 @@ void loop() {
   if (currentMicros - pmSpeedCheck >= 200000
       && microsTillNextTx > 25) {
     pmSpeedCheck = currentMicros;
+    debugPulse(debugPin1, 1);
     speedCheck();
+    debugPulse(debugPin1, 2);
     return;
   }
 
   if (directedby == Autocruise && currentMicros - pmAutocruise >= 150000
       && microsTillNextTx > 25) { // it takes ~20us on 16MHz
     pmAutocruise = currentMicros;
+    debugPulse(debugPin2, 1);
     calculateAutocruise();
+    debugPulse(debugPin2, 2);
     return;
   }
 
@@ -868,7 +870,7 @@ void loop() {
     if (microsTillNextTx > 50) {
       listenSerialControl();
     }
-    if (_SERIAL_INFO && currentMicros - pmSerialInfo >= 500000
+    if (_SERIAL_INFO && currentMicros - pmSerialInfo >= 2000000
       && microsTillNextTx > 200) { //it takes ~420us on 16MHz
       pmSerialInfo = currentMicros;
       serialInfo();
