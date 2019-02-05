@@ -69,8 +69,10 @@ uint8_t leftHallYellowState;
 
 signed long leftLastRealInterrupt  = 0; // when did the last hall interrupt happened.
 signed long rightLastRealInterrupt = 0; // Same as above, but for the right wheel.
-signed int leftActualCmPS          = 0; // Measured Absolute wheel speed in cm/s. More about units in README.md
+signed int leftActualCmPS          = 0; // Measured Absolute wheel speed in cm/s unit. More about units in README.md
 signed int rightActualCmPS         = 0; // Same as above, but for the right wheel
+signed int leftActualAcc           = 0; // Measured acceleration in cm/s^2 unit. More about units in README.md
+signed int rightActualAcc          = 0; // Same as above, but for the right wheel
 signed int leftForce               = 0; // Accelerating force. A wired unit what gyro extension board sends to motherboard based on its horizontal angle.
 signed int rightForce              = 0; // Same as above, but for the right side
 signed int leftTargetCmPS          = 0; // Target speed (wheel RMP) in auto-cruise direction mode
@@ -207,6 +209,28 @@ void writeCurrentSpeed() {
         break;
     }
   }
+}
+
+/**
+  * Calculates actual acceleration
+  * 
+  * !IMPORTANT this method must be called in every 50 millis.
+  * 
+  * To avoid expensive division it has been called in every 50 millis, therefore 
+  * the time become multiply of 20; 1s / 0.05 => 20;
+  * The latest two period has 8 and the 3rd last has 4 multiplication.
+  */
+void calculateActualAcceleration() {
+  static signed int lV1 = 0, lV2 = 0, lV3 = 0;
+  static signed int rV1 = 0, rV2 = 0, rV3 = 0;
+  leftActualAcc  = ((leftActualCmPS  - lV3) * 8) + ((lV3 - lV2) * 8) + ((lV2-lV1) * 4);
+  rightActualAcc = ((rightActualCmPS - rV3) * 8) + ((rV3 - rV2) * 8) + ((rV2-rV1) * 4);
+  lV1 = lV2;
+  lV2 = lV3;
+  lV3 = leftActualCmPS;
+  rV1 = rV2;
+  rV2 = rV3;
+  rV3 = rightActualCmPS;
 }
 
 /**
@@ -554,6 +578,10 @@ inline void serialInfo() {
   Serial.print(leftActualCmPS);
   Serial.print(";");
   Serial.print(rightActualCmPS);
+  Serial.print(";cm/s^2:");
+  Serial.print(leftActualAcc);
+  Serial.print(";");
+  Serial.print(rightActualAcc);
   Serial.print(";F:");
   Serial.print(leftForce);
   Serial.print(";");
@@ -579,19 +607,19 @@ inline void serialInit() {
     Serial.println("\n         _    _\n         \\`../ |o_..__\n          (*)______(*).>\n\n");
     Serial.println("Hi there, CarOne is ready to drive.");
     Serial.println("Commands:");
-    Serial.println("\t1\t Hijack on");
-    Serial.println("\t0\t Hijack off");
-    Serial.println("\tp\t Park");
-    Serial.println("\td\t Drive");
-    Serial.println("\tn\t Reset acceleration");
-    Serial.println("\tq\t Set left side acceleration min: -2900, max: 2900");
-    Serial.println("\tw\t Set right side acceleration min: -2900, max: 2900");
-    Serial.println("\tm\t Reset target speed");
-    Serial.println("\ta\t Set left target speed min: -80, max: 80");
-    Serial.println("\ts\t Set right target speed min: -80, max: 80");
+    Serial.println("\ti;\t Hijack on");
+    Serial.println("\to;\t Hijack off");
+    Serial.println("\tp;\t Park");
+    Serial.println("\td;\t Drive");
+    Serial.println("\tn;\t Reset acceleration");
+    Serial.println("\tq[-0-9];\t Set left side acceleration min: -2900, max: 2900");
+    Serial.println("\tw[-0-9];\t Set right side acceleration min: -2900, max: 2900");
+    Serial.println("\tm;\t Reset target speed");
+    Serial.println("\ta[-0-9];\t Set left target speed min: -80, max: 80");
+    Serial.println("\ts[-0-9];\t Set right target speed min: -80, max: 80");
     Serial.print("\n1) Last Command; 2) Hijack; 3) Shifter; 4) Directed by; ");
-    Serial.print("5) Left cm/s; 6) R. cm/s; 7) Left Force; ");
-    Serial.println("8) R. F.; 9) Left target cm/s; 10) R. t. cm/s;");
+    Serial.print("5) Left cm/s; 6) R. cm/s; 7) Left cm/s^2; 8) R. cm/s^2; 9) Left Force; ");
+    Serial.println("10) R. F.; 11) Left target cm/s; 12) R. t. cm/s;");
   }
 }
 #else
@@ -822,6 +850,7 @@ void loop() {
   static unsigned long pmTx =  0;
   static unsigned long pmSchmittTrigger =  0;
   static unsigned long pmSpeedCheck =  0;
+  static unsigned long pmActualAcceleration =  0;
   static unsigned long pmAutocruise =  0;
   static unsigned long pmListenControl =  0;
   static unsigned long pmSerialInfo =  0;
@@ -849,20 +878,25 @@ void loop() {
   }
 
   if (currentMicros - pmSpeedCheck >= 200000
-      && microsTillNextTx > 25) {
+      && microsTillNextTx > 25) {  //it takes ~16us on 16MHz
     pmSpeedCheck = currentMicros;
-    debugPulse(debugPin1, 1);
     speedCheck();
-    debugPulse(debugPin1, 2);
+    return;
+  }
+
+  if (currentMicros - pmActualAcceleration >= 50000
+      && microsTillNextTx > 25) { // it takes ?? on 16MHz
+    pmActualAcceleration = currentMicros;
+    calculateActualAcceleration();
     return;
   }
 
   if (directedby == Autocruise && currentMicros - pmAutocruise >= 150000
       && microsTillNextTx > 25) { // it takes ~20us on 16MHz
     pmAutocruise = currentMicros;
-    debugPulse(debugPin2, 1);
+    // debugPulse(debugPin2, 3);
     calculateAutocruise();
-    debugPulse(debugPin2, 2);
+    // debugPulse(debugPin2, 4);
     return;
   }
 
