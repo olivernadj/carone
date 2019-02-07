@@ -1,8 +1,8 @@
 #include <Wire.h>
 
 #define _I2C_BUS_ADDRESS 8
-#define _MAX_CRUISING_SPEED 60
-#define _MAX_MANEUVERING_SPEED 30
+#define _MAX_CRUISING_SPEED 35
+#define _MAX_MANEUVERING_SPEED 20
 #define _MAX_IDDLE_TIME 250 // after x millis will go to park mode
 
 signed int leftCyclePerSec   = 0; //hall effect cycles. 

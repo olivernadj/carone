@@ -1,33 +1,23 @@
 # CarOne
-Turn a self balancing scooter to a toy car
+Turn a self balancing scooter -Hoverboard- into a kids' electric car.
+The main goal of the project is to keep the original functionality and behavior of the self balancing scooter, but in the same time with an extension board enable external control. Also use cheap and well know electrical parts and component.
 
-## Specification
+- [Board Specification and Applied Units](./docs/specification.md)
+- [CarOne glossary](./docs/glossary.md)
+- [Auto-cruise algorithm](./docs/autocruise.ipynb)
 
-Property | Measured value
---- | ---
-Wheel diameter | 17 cm
-Wheel circumference | 53.4 cm
-Wheel revolution | 15 hall cycles
-Max controllable speed | 142 cm/s
-Max single side speed | ~300 cm/s
+## License
 
-On single side mode with 0 load, around 2.5-3.3 force yields 1 cm/s.
+    Copyright [2019] [oliver nadj]
 
-Some examples:
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
 
-Force | Speed
---- | ---
-100 | 28 
-150 | 50 
-200 | 77
-300 | 120
+        http://www.apache.org/licenses/LICENSE-2.0
 
-
-### Conversions
-Conversions between common units of speed
-
-Base value | hall cycles/s | RPM | cm/s
---- | --- | --- | ---
-**hall cycles** | 1 | 4 | 3.56
-**RPM** | 0.25 | 1 | 0.89
-**cm/s** | 0.282 | 1.127 | 1
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.

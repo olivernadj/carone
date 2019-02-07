@@ -32,16 +32,19 @@ the_debug_use_the_same_pins_as_I2C_therefore_both_cannot_be_used;
 //
 // Default directing mode
 #define _DEFAULT_DIRECTION 0 // 0:acceleration, 1:target speed.
-// Measured output from gyro board at ~30 degree horizontal angle is 2900.
-#define _MAX_GYRO_ACCELERATION 180
+// BTW: The measured output from gyro board at ~30 degree horizontal angle is 2900.
+#define _MAX_GYRO_ACCELERATION 180 // Absolute upper limit for acceleration all across the system.
+#define _AUTOCRUISE_SINGLE_START_FORCE 80 // Initial force. With 0 initial force the acceleration is sluggish. Single mode means only one wheel is working and the acceleration force related to speed is linear.
+#define _AUTOCRUISE_SINGLE_FORCE_INC 5 // Force adjusting increments or decrements.
+#define _AUTOCRUISE_DUAL_START_FORCE 60 // Initial force. Dual mode means both wheels are working and the acceleration happens exponentially, therefor need to converge to zero. Zero force means keep velocity.
+#define _AUTOCRUISE_DUAL_FORCE_INC 10 // Force adjusting increments or decrements. Only used for acceleration from 0 speed.
+#define _AUTOCRUISE_DUAL_BASE_ACC 24 // cm/s^2; Max speed 142cm/s in 6 second
+#define _AUTOCRUISE_DUAL_ADVANCE 1 // second; Used for calculate future speed and acceleration
+#define _AUTOCRUISE_DUAL_ADVANCE_RECIPROCAL (1/_AUTOCRUISE_DUAL_ADVANCE) // not really used, keep it integer due to better performance
 // Maximum allowed speed before the safety parking mode activated.
 // The hover board tend to loose control above that speed.
 #define _MAX_SPEED 142 // Max controllable speed in cm/s. More about units in README.md
 #define _SAFETY_SPEED_LIMIT 150 // Force parking mode above that speed. 
-#define _AUTOCRUISE_SINGLE_START_FORCE 80 // Initial force. With 0 initial force the acceleration is sluggish. Single mode means only one wheel is working and the acceleration force related to speed is linear.
-#define _AUTOCRUISE_SINGLE_FORCE_INC 5 // Force adjusting increments or decrements.
-#define _AUTOCRUISE_DUAL_START_FORCE 80 // Initial force. Dual mode means both wheels are working and the acceleration happens exponentially, therefor need to converge to zero. Zero force means keep velocity.
-#define _AUTOCRUISE_DUAL_FORCE_INC 5 // Force adjusting increments or decrements. Only used for acceleration from 0 speed.
 // Settings for hall sensor of the wheel.
 #define _HALL_DIRECTION_DETECT_LIMIT 120 // Detects direction (cw,ccw) under this wheel cm/s limit.
 // Although ccw status logically is a boolean, we need to avoid hall check errors. The implemented software solution is to incrementally enforcing the status on each sampling. This method absorbs occasional sampling errors.
@@ -234,13 +237,115 @@ void calculateActualAcceleration() {
 }
 
 /**
-  * Calculates necessary acceleration to catch up with target speed
+  * Calculates necessary force to catch up with target speed 
+  * 
+  * Only called if both wheel are operating
+  */
+void calculateDualAutocruise() { //called in every 100ms
+  signed int leftVf = 0; //future velocity
+  signed int leftAt = 0; //target acceleration
+  signed int leftForceInc = 0;
+  signed int rightVf = 0; //future velocity
+  signed int rightAt = 0; //target acceleration
+  signed int rightForceInc = 0;
+  static signed int rightLastTargetCmPS = 0; // For applying initial force if target speed has changes;
+  static signed int leftLastTargetCmPS = 0; // For applying initial force if target speed has changes;
+
+  leftDrive = true;
+  rightDrive = true;
+
+  leftForceInc =  (leftLastTargetCmPS != leftTargetCmPS ? _AUTOCRUISE_DUAL_START_FORCE : _AUTOCRUISE_DUAL_FORCE_INC);
+  leftVf = leftActualCmPS + (_AUTOCRUISE_DUAL_ADVANCE * leftActualAcc);
+  if (leftTargetCmPS == leftVf) {
+    leftAt = 0;
+  } else if ( (leftActualAcc > 0 && leftVf > leftTargetCmPS) || (leftActualAcc < 0 && leftVf < leftTargetCmPS) ) {
+    leftAt = (leftTargetCmPS - leftVf) * _AUTOCRUISE_DUAL_ADVANCE_RECIPROCAL;
+  } else {
+    leftAt = _AUTOCRUISE_DUAL_BASE_ACC * ( leftTargetCmPS < leftActualCmPS ? -1 : 1 );
+  }
+  if (leftAt != leftActualAcc) {
+    if (leftAt < leftActualAcc) {
+      leftForce -= leftForceInc;
+    } else {
+      leftForce += leftForceInc;
+    }
+  }
+  leftLastTargetCmPS = leftTargetCmPS;
+
+  rightForceInc =  (rightLastTargetCmPS != rightTargetCmPS ? _AUTOCRUISE_DUAL_START_FORCE : _AUTOCRUISE_DUAL_FORCE_INC);
+  rightVf = rightActualCmPS + (_AUTOCRUISE_DUAL_ADVANCE * rightActualAcc);
+  if (rightTargetCmPS == rightVf) {
+    rightAt = 0;
+  } else if ( (rightActualAcc > 0 && rightVf > rightTargetCmPS) || (rightActualAcc < 0 && rightVf < rightTargetCmPS) ) {
+    rightAt = (rightTargetCmPS - rightVf) * _AUTOCRUISE_DUAL_ADVANCE_RECIPROCAL;
+  } else {
+    rightAt = _AUTOCRUISE_DUAL_BASE_ACC * ( rightTargetCmPS < rightActualCmPS ? -1 : 1 );
+  }
+  if (rightAt != rightActualAcc) {
+    if (rightAt < rightActualAcc) {
+      rightForce -= rightForceInc;
+    } else {
+      rightForce += rightForceInc;
+    }
+  }
+  rightLastTargetCmPS = rightTargetCmPS;
+
+}
+
+/**
+  * Calculates necessary force to catch up with target speed 
+  * 
+  * Only called if only on wheel is operating
+  */
+void calculateSingleAutocruise() {
+  if (rightDrive == false && leftTargetCmPS != 0) {
+    if (leftDrive == false) {
+      // always start the drive mode with 0 force
+      leftDrive = true;
+      leftForce = 0;
+    } else if (leftForce == 0) {
+      leftForce = (leftTargetCmPS < 0 ? -_AUTOCRUISE_SINGLE_START_FORCE : _AUTOCRUISE_SINGLE_START_FORCE); // initial force
+    } else {
+      if (leftTargetCmPS > leftActualCmPS) {
+        leftForce += _AUTOCRUISE_SINGLE_FORCE_INC; // need to be fine tuned
+      } else if(leftTargetCmPS < leftActualCmPS) {
+        leftForce -= _AUTOCRUISE_SINGLE_FORCE_INC;
+      }
+    }
+  } else {
+    if (leftForce == 0) {
+      leftDrive = false;
+    } else {
+      leftForce = 0;
+    }
+  }
+  if (leftDrive == false && rightTargetCmPS != 0) {
+    if (rightDrive == false) {
+      rightDrive = true;
+      rightForce = 0;
+    } else if (rightForce == 0) {
+      rightForce = (rightTargetCmPS < 0 ? -_AUTOCRUISE_SINGLE_START_FORCE : _AUTOCRUISE_SINGLE_START_FORCE); // initial force
+    } else {
+      if (rightTargetCmPS > rightActualCmPS) {
+        rightForce += _AUTOCRUISE_SINGLE_FORCE_INC;
+      } else if(rightTargetCmPS < rightActualCmPS) {
+        rightForce -= _AUTOCRUISE_SINGLE_FORCE_INC;
+      }
+    }
+  } else {
+    if (rightForce == 0) {
+      rightDrive = false;
+    } else {
+      rightForce = 0;
+    }
+  }
+}
+
+/**
+  * Calculates necessary force to catch up with target speed
   *
   */
 void calculateAutocruise() {
-  //debugPulse(debugPin1, 1);
-  signed int leftRecentCmPS  = 0;
-  signed int rightRecentCmPS = 0;
   static bool onMyWay = false;
   if (shifter != 'D') {
     leftForce = 0;
@@ -249,92 +354,15 @@ void calculateAutocruise() {
     leftDrive = false;
     rightDrive = false;
   } else if (!onMyWay && (leftTargetCmPS == 0 || rightTargetCmPS == 0)) { // singe side mode
-    if (rightDrive == false && leftTargetCmPS != 0) {
-      if (leftDrive == false) {
-        // always start the drive mode with 0 force
-        leftDrive = true;
-        leftForce = 0;
-      } else if (leftForce == 0) {
-        leftForce = (leftTargetCmPS < 0 ? -_AUTOCRUISE_SINGLE_START_FORCE : _AUTOCRUISE_SINGLE_START_FORCE); // initial force
-      } else {
-        if (leftTargetCmPS > leftActualCmPS) {
-          leftForce += _AUTOCRUISE_SINGLE_FORCE_INC; // need to be fine tuned
-        } else if(leftTargetCmPS < leftActualCmPS) {
-          leftForce -= _AUTOCRUISE_SINGLE_FORCE_INC;
-        }
-      }
-    } else {
-      if (leftForce == 0) {
-        leftDrive = false;
-      } else {
-        leftForce = 0;
-      }
-    }
-    if (leftDrive == false && rightTargetCmPS != 0) {
-      if (rightDrive == false) {
-        rightDrive = true;
-        rightForce = 0;
-      } else if (rightForce == 0) {
-        rightForce = (rightTargetCmPS < 0 ? -_AUTOCRUISE_SINGLE_START_FORCE : _AUTOCRUISE_SINGLE_START_FORCE); // initial force
-      } else {
-        if (rightTargetCmPS > rightActualCmPS) {
-          rightForce += _AUTOCRUISE_SINGLE_FORCE_INC;
-        } else if(rightTargetCmPS < rightActualCmPS) {
-          rightForce -= _AUTOCRUISE_SINGLE_FORCE_INC;
-        }
-      }
-    } else {
-      if (rightForce == 0) {
-        rightDrive = false;
-      } else {
-        rightForce = 0;
-      }
-    }
+    calculateSingleAutocruise();
   } else if (onMyWay || (leftTargetCmPS != 0 && rightTargetCmPS != 0)) {
     onMyWay = true;
-    leftDrive = true;
-    rightDrive = true;
-    if (leftTargetCmPS != 0 && leftActualCmPS == 0 && leftForce == 0) {
-      leftForce = (leftTargetCmPS < 0 ? -_AUTOCRUISE_DUAL_START_FORCE : _AUTOCRUISE_DUAL_START_FORCE); // initial force
-    } else if (leftTargetCmPS != 0 && abs(leftActualCmPS) <= 5) {
-      if (leftTargetCmPS > 0) {
-        leftForce += _AUTOCRUISE_DUAL_FORCE_INC; // need to be fine tuned
-      } else {
-        leftForce -= _AUTOCRUISE_DUAL_FORCE_INC;
-      }
-    } else {
-      leftForce = leftTargetCmPS - leftActualCmPS;
-    }
-    if (rightTargetCmPS != 0 && rightActualCmPS == 0 && rightForce == 0) {
-      rightForce = (rightTargetCmPS < 0 ? -_AUTOCRUISE_DUAL_START_FORCE : _AUTOCRUISE_DUAL_START_FORCE); // initial force
-    } else if (rightTargetCmPS != 0 && abs(rightActualCmPS) <= 5) {
-      if (rightTargetCmPS > 0) {
-        rightForce += _AUTOCRUISE_DUAL_FORCE_INC; // need to be fine tuned
-      } else {
-        rightForce -= _AUTOCRUISE_DUAL_FORCE_INC;
-      }
-    } else {
-      rightForce = rightTargetCmPS - rightActualCmPS;
-    }
-    if (leftTargetCmPS > 0 && rightTargetCmPS < 0) {
-      leftForce += 20;
-      rightForce -= 20;
-    } else if (leftTargetCmPS > 0 && rightTargetCmPS == 0) {
-      leftForce += 20;
-    } else if (leftTargetCmPS == 0 && rightTargetCmPS > 0) {
-      rightForce += 20;
-    } else if (leftTargetCmPS < 0 && rightTargetCmPS > 0) {
-      leftForce -= 20;
-      rightForce += 20;
-    }
+    calculateDualAutocruise();
   }
   if (leftForce > _MAX_GYRO_ACCELERATION) leftForce = _MAX_GYRO_ACCELERATION;
   if (leftForce < -_MAX_GYRO_ACCELERATION) leftForce = -_MAX_GYRO_ACCELERATION;
   if (rightForce > _MAX_GYRO_ACCELERATION) rightForce = _MAX_GYRO_ACCELERATION;
   if (rightForce < -_MAX_GYRO_ACCELERATION) rightForce = -_MAX_GYRO_ACCELERATION;
-  leftRecentCmPS = leftActualCmPS;
-  rightRecentCmPS = rightActualCmPS;
-  //debugPulse(debugPin1, 1);
 }
 
 /**
@@ -891,7 +919,7 @@ void loop() {
     return;
   }
 
-  if (directedby == Autocruise && currentMicros - pmAutocruise >= 150000
+  if (directedby == Autocruise && currentMicros - pmAutocruise >= 100000
       && microsTillNextTx > 25) { // it takes ~20us on 16MHz
     pmAutocruise = currentMicros;
     // debugPulse(debugPin2, 3);
