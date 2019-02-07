@@ -9,9 +9,15 @@ The main goal of the project is to keep the original functionality and behavior 
 With CarOne Expansion board the max speed you can get is 142cm/s. In case you are not intend to keep the original functionality and you don't mindt to replace the firmware and completly repurpose the hoverboard, I recommend to check this active repo out: https://github.com/NiklasFauth/hoverboard-firmware-hack
 
 ## How It Works?
-It's follow [Brew's idea][drewsblog] and it hijacks gyro sensor communication between the **Motherboard** and the **Gyro Sensor board**. It sends fake gyro sensor information to **Motherboard**, but also reads **Hall effect sensor** to detect the speed. The minimum demage you need to do is to cat wires.
-![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/cut-the-wires.jpg)
-![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/connect-the-wires.jpg)
+It's follow [Brew's idea][drewsblog] and it hijacks gyro sensor communication between the **Motherboard** and the **Gyro Sensor board**. It sends fake gyro sensor information to **Motherboard**, but also reads **Hall effect sensor** to detect the speed. 
+
+### How to wire?
+The minimum demage you need to do is to cat wires.
+
+<p align="center">
+  <img width="444" height="444" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/cut-the-wires.jpg">
+  <img width="444" height="444" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/connect-the-wires.jpg">
+</p>
 
 Affected wires on both left and right side:
 - Hall Yellow and Blue - for speed detection
@@ -20,8 +26,9 @@ Affected wires on both left and right side:
 
 The transmission signal from the Motherboard to Gyro Sensor is untached.
 
-Here you can take a look at the pin-outs.
 ![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pinout.png)
+![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone-v4_schem.png)
+
 
 
 
