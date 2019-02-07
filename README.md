@@ -26,11 +26,13 @@ Affected wires on both left and right side:
 
 The transmission signal from the Motherboard to Gyro Sensor is untouched.
 
-___
+---
 ![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pinout.png)
-___
+---
 ![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone-v4_schem.png)
-Schema abbreviation| Description |  | Schema abbreviation| Description
+
+
+Schema abbreviation | Description |  | Schema abbreviation | Description
 --- | --- | --- | --- | ---
 **`DTR`** | Arduino Serial Reset | | **`L14v.In`** | Left Red Gyro Sensor from the Motherboard
 **`DTR`** | Arduino Serial Reset | | **`R14v.In`** | Right Red Gyro Sensor Red from the Motherboard
@@ -41,9 +43,10 @@ Schema abbreviation| Description |  | Schema abbreviation| Description
 **`R-Hall-B`** | Right Hall Blue - join | | **`L-Gyro-Tx`** | Left Green Gyro Sensor Red to the Motherboard
 **`R-Hall-Y`** | Right Hall Yellow - join | | **`R-Gyro-Tx`** | Right Green Gyro Sensor Red to the Motherboard
 
-___
+
+---
 ![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone-v4_bb.png)
-___
+---
 
 
 
