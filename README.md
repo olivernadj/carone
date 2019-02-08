@@ -11,45 +11,8 @@ With CarOne Expansion board the max speed you can get is 142cm/s. In case you ar
 ## How It Works?
 It's follow [Brew's idea][drewsblog] and it hijacks gyro sensor communication between the **Motherboard** and the **Gyro Sensor board**. It sends fake gyro sensor information to **Motherboard**, but also reads **Hall effect sensor** to detect the speed. 
 
-### How to wire?
-The minimum demage you need to do is to cat wires.
 
-<p align="center">
-  <img width="444" height="444" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/cut-the-wires.jpg">
-  <img width="444" height="444" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/connect-the-wires.jpg">
-</p>
-
-Affected wires on both left and right side:
-- Hall Yellow and Blue - for speed detection
-- Gyro Sensor Red and Black - for power supply to Expansion board
-- Gyro Sensor Green - for receiving fake UART from Expansion board
-
-The transmission signal from the Motherboard to Gyro Sensor is untouched.
-
----
-![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pinout.png)
----
-![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone-v4_schem.png)
-
-
-Schema abbreviation | Description |  | Schema abbreviation | Description
---- | --- | --- | --- | ---
-**`DTR`** | Arduino Serial Reset | | **`L14v.In`** | Left Red Gyro Sensor from the Motherboard
-**`DTR`** | Arduino Serial Reset | | **`R14v.In`** | Right Red Gyro Sensor Red from the Motherboard
-**`RX`** | Arduino Serial RX | | **`L14v.Out`** | Left Red Gyro Sensor Red to Gyro Sensor
-**`TX`** | Arduino Serial TX | | **`R14v.Out`** | Right Red Gyro Sensor Red to Gyro Sensor
-**`L-Hall-B`** | Left Hall Blue - join | | **`L-Gyro-Rx`** | Left Green Gyro Sensor Red from Gyro Sensor
-**`L-Hall-Y`** | Left Hall Yellow - join | | **`R-Gyro-Rx`** | Right Green Gyro Sensor Red from Gyro Sensor
-**`R-Hall-B`** | Right Hall Blue - join | | **`L-Gyro-Tx`** | Left Green Gyro Sensor Red to the Motherboard
-**`R-Hall-Y`** | Right Hall Yellow - join | | **`R-Gyro-Tx`** | Right Green Gyro Sensor Red to the Motherboard
-
-
----
-![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone-v4_bb.png)
----
-
-
-
+- [Hardware and wiring](./docs/hardware.md)
 - [Board Specification and Applied Units](./docs/specification.md)
 - [CarOne glossary](./docs/glossary.md)
 - [Auto-cruise algorithm](./docs/autocruise.ipynb)
