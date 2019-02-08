@@ -18,6 +18,7 @@
   <img width="400" height="281" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pcb.png">
   <img width="400" height="281" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pcb-back.png">
 </p>
+
 Check out the Fritzing project file: [carone-v4.fzz](https://github.com/olivernadj/carone/raw/master/carone-v4.fzz)
 ---
 ![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone-v4_bb.png)
