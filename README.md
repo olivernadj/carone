@@ -9,7 +9,7 @@ The main goal of the project is to keep the original functionality and behavior 
 With CarOne Expansion board the max speed you can get is 142cm/s. In case you are not intend to keep the original functionality and you don't mind to replace the firmware and completely re-purpose the hoverboard, I recommend to check this active repo out: https://github.com/NiklasFauth/hoverboard-firmware-hack
 
 ## How It Works?
-It's follow [Brew's idea][drewsblog] and it hijacks gyro sensor communication between the **Motherboard** and the **Gyro Sensor board**. It sends fake gyro sensor information to **Motherboard**, but also reads **Hall effect sensor** to detect the speed. 
+It's follow [Brew's idea][drewsblog] and it hijacks gyro sensor communication between the **Motherboard** and the **Gyro Sensor board**. It sends fake gyro sensor information to **Motherboard**, but also it reads **Hall effect sensor** to detect the speed. 
 
 
 - [Hardware and wiring](./docs/hardware.md)

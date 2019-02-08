@@ -15,8 +15,8 @@
 ![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone-v4_schem.png)
 
 <p align="center">
-  <img width="444" height="444" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pcb.png">
-  <img width="444" height="444" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pcb-back.png">
+  <img width="400" height="281" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pcb.png">
+  <img width="400" height="281" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/pcb-back.png">
 </p>
 Check out the Fritzing project file: [carone-v4.fzz](https://github.com/olivernadj/carone/raw/master/carone-v4.fzz)
 ---
@@ -30,8 +30,8 @@ Check out the Fritzing project file: [carone-v4.fzz](https://github.com/oliverna
 The minimum damage you need to do is to cat wires.
 
 <p align="center">
-  <img width="444" height="444" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/cut-the-wires.jpg">
-  <img width="444" height="444" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/connect-the-wires.jpg">
+  <img width="400" height="400" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/cut-the-wires.jpg">
+  <img width="400" height="400" src="https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/connect-the-wires.jpg">
 </p>
 
 Affected wires on both left and right side:
