@@ -1,7 +1,7 @@
 # CarOne
 Turn a self balancing scooter -Hoverboard- into a kids' electric car.
 
-![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone.gif)
+![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone.gif) ![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone.png)
 
 The main goal of the project is to keep the original functionality and behavior of the self balancing scooter, but in the same time with an extension board enable external control. Also use cheap and well know electrical parts and component.
 

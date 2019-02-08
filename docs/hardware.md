@@ -20,7 +20,7 @@
 </p>
 
 Check out the Fritzing project file: [carone-v4.fzz](https://github.com/olivernadj/carone/raw/master/carone-v4.fzz)
----
+
 ![](https://raw.githubusercontent.com/olivernadj/carone/master/docs/pictures/carone-v4_bb.png)
 ---
 
