@@ -15,7 +15,14 @@ It's follow [Brew's idea][drewsblog] and it hijacks gyro sensor communication be
 - [Hardware and wiring](./docs/hardware.md)
 - [Board Specification and Applied Units](./docs/specification.md)
 - [CarOne glossary](./docs/glossary.md)
-- [Auto-cruise algorithm](./docs/autocruise.ipynb)
+
+## Achievements on Arduino Micro (ATmega328P 16MHz) board.
+
+- [SoftSerialParallelWrite](https://github.com/olivernadj/SoftSerialParallelWrite) for sending parallel UART signal to the Daughterboard.
+- Shmitt Trigger in background process.
+- [Auto-cruise algorithm](./docs/autocruise.ipynb) development of Auto-cruise algorithm before C implementation.
+- All of the above dots in a single board.
+
 
 ## License
 
